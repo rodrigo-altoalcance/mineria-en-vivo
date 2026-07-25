@@ -1,26 +1,38 @@
 @import "tailwindcss";
 
+/* ── Design tokens: Deep-Core Precision ── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg:           #0b0f1c;
+  --surface:      #141928;
+  --surface2:     #1d2236;
+  --surface3:     #232c45;
+  --border:       #2a3154;
+  --border-dim:   #1e2540;
+  --text:         #dde2f5;
+  --text-muted:   #7a82a8;
+  --text-faint:   #404870;
+  --accent:       #648aff;
+  --accent-dim:   rgba(100,138,255,0.12);
+  --ok:           #22c55e;
+  --warn:         #d97706;
+  --error:        #ef4444;
+  --radius:       6px;
+  --radius-lg:    10px;
+  --shadow:       0 4px 24px rgba(0,0,0,0.55);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Scrollbar global */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
+*::-webkit-scrollbar { width: 4px; height: 4px; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
