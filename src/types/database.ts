@@ -12,6 +12,19 @@ export type ProfileRow = {
   updated_at: string
 }
 
+export type FavoritoRow = {
+  id: string
+  user_id: string
+  numero_rol: string
+  dv_rol: string | null
+  nombre: string | null
+  tipo_concesion: string | null
+  situacion_concesion: string | null
+  titular_nombre: string | null
+  comuna: string | null
+  created_at: string
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -34,6 +47,21 @@ export interface Database {
           plan_expires_at?: string | null
           updated_at?: string
         }
+        Relationships: []
+      }
+      favoritos: {
+        Row: FavoritoRow
+        Insert: {
+          user_id: string
+          numero_rol: string
+          dv_rol?: string | null
+          nombre?: string | null
+          tipo_concesion?: string | null
+          situacion_concesion?: string | null
+          titular_nombre?: string | null
+          comuna?: string | null
+        }
+        Update: Record<string, never>
         Relationships: []
       }
     }
