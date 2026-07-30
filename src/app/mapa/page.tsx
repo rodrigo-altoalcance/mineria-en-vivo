@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { redirect } from 'next/navigation'
 import MapClient from './MapClient'
 import type { FavoritoRow, ProfileRow } from '@/types/database'
@@ -10,7 +11,7 @@ export default async function MapaPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // Fetch profile — auto-create if trigger didn't fire on signup
+  // Buscar perfil; si no existe (trigger no corrió al registrarse), crearlo con admin client
   let { data: profile } = await supabase
     .from('profiles')
     .select('*')
@@ -18,9 +19,13 @@ export default async function MapaPage() {
     .single()
 
   if (!profile) {
-    const { data: created } = await supabase
+    const admin = createAdminClient()
+    const { data: created } = await admin
       .from('profiles')
-      .upsert({ id: user.id, email: user.email! }, { onConflict: 'id' })
+      .upsert(
+        { id: user.id, email: user.email! },
+        { onConflict: 'id' }
+      )
       .select()
       .single()
     profile = created
