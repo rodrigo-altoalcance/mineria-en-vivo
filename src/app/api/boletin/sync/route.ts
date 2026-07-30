@@ -129,7 +129,6 @@ async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MinenBot/1.0)' },
     redirect: 'follow',
-    // @ts-expect-error next-specific
     cache: 'no-store',
   })
   if (!res.ok) throw new Error(`HTTP ${res.status} at ${url}`)
