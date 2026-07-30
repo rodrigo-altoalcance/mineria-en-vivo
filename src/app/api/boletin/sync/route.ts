@@ -2,35 +2,10 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 const SYNC_SECRET = process.env.BOLETIN_SYNC_SECRET
+const BASE = 'https://www.boletinoficialdemineria.cl'
 
-// Subsecciones conocidas del Boletín Oficial de Minería
-const CATEGORIAS = [
-  { subseccion: 7100, nombre: 'Manifestación Minera' },
-  { subseccion: 7101, nombre: 'Solicitud de Mensura' },
-  { subseccion: 7112, nombre: 'Prórroga Exploración' },
-]
-
-const BASE_URL = 'https://www.boletinoficialdemineria.cl'
-
-function stripTags(s: string): string {
-  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function decodeHtml(s: string): string {
-  return s
-    .replace(/&amp;/g, '&')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .trim()
-}
-
-function cleanText(s: string): string {
-  return decodeHtml(stripTags(s))
-}
+// Subsecciones disponibles en el sidebar de boletinoficialdemineria.cl
+const SUBSECCIONES = [7100, 7101, 7112]
 
 interface BoletinEntry {
   fecha: string
@@ -44,122 +19,167 @@ interface BoletinEntry {
   url_pdf: string | null
 }
 
-function parsePage(html: string, categoria: string): { entries: BoletinEntry[]; fecha: string; edicion: number } {
-  // Extract edition number and date from page
-  const edicionMatch = html.match(/Edici[oó]n\s+N[uú]m\.?\s*([\d\.]+)/i)
-  const edicion = edicionMatch ? parseInt(edicionMatch[1].replace(/\./g, '')) : 0
+function stripTags(s: string): string {
+  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
-  // Try to parse date from page header (e.g., "Jueves 30 de Julio de 2026")
-  const MESES: Record<string, string> = {
-    enero: '01', febrero: '02', marzo: '03', abril: '04',
-    mayo: '05', junio: '06', julio: '07', agosto: '08',
-    septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12',
-  }
+function decodeHtml(s: string): string {
+  return s
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .trim()
+}
+
+const cleanText = (s: string) => decodeHtml(stripTags(s))
+
+/**
+ * HTML structure of boletinoficialdemineria.cl:
+ *   <table>
+ *     <tr><td class="title3"> PEDIMENTOS MINEROS </td></tr>   ← categoría
+ *     <tr><td class="title4">REGIÓN DE ...</td></tr>          ← región
+ *     <tr><td class="title5">Provincia de ...</td></tr>       ← provincia
+ *     <tr class="content">
+ *       <td>NOMBRE / Titular <span ...></td>
+ *       <td><a href="...pdf">Ver PDF (CVE-NNNN)</a></td>
+ *     </tr>
+ *   </table>
+ */
+function parsePage(html: string): { entries: BoletinEntry[]; fecha: string; edicion: number } {
+  // Extract edition number from any link: ?edition=44512
+  const edicionMatch = html.match(/edition=(\d+)/i)
+  const edicion = edicionMatch ? parseInt(edicionMatch[1]) : 0
+
+  // Extract date from link: ?date=30-07-2026
   let fecha = new Date().toISOString().split('T')[0]
-  const dateMatch = html.match(/(\d{1,2})\s+de\s+([A-Za-záéíóú]+)\s+de\s+(\d{4})/i)
-  if (dateMatch) {
-    const mes = MESES[dateMatch[2].toLowerCase()]
-    if (mes) {
-      fecha = `${dateMatch[3]}-${mes}-${dateMatch[1].padStart(2, '0')}`
-    }
+  const dateUrlMatch = html.match(/date=(\d{2}-\d{2}-\d{4})/)
+  if (dateUrlMatch) {
+    const [d, m, y] = dateUrlMatch[1].split('-')
+    fecha = `${y}-${m}-${d}`
   }
 
-  // Remove script/style blocks
+  // Remove noise
   const clean = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
 
-  // Extract all block-level elements in DOM order
-  const blocks = [...clean.matchAll(/<(p|h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/gi)]
+  // Parse all <tr> blocks
+  const rows = [...clean.matchAll(/<tr([^>]*)>([\s\S]*?)<\/tr>/gi)]
 
   const entries: BoletinEntry[] = []
+  let categoria = ''
   let region: string | null = null
   let provincia: string | null = null
-  let pendingNombre = ''
-  let pendingTitular: string | null = null
 
-  for (const [, , content] of blocks) {
-    const text = cleanText(content)
-    if (!text) continue
-
-    const upper = text.toUpperCase()
-
-    // Region header
-    if (upper.match(/^REGI[OÓ]N\s+(DE[L]?|DEL)\s/)) {
-      region = text
+  for (const [, trAttrs, trContent] of rows) {
+    // Category header (title3)
+    const t3 = trContent.match(/<td[^>]*class="[^"]*title3[^"]*"[^>]*>([\s\S]*?)<\/td>/i)
+    if (t3) {
+      categoria = cleanText(t3[1])
+      region = null
       provincia = null
-      pendingNombre = ''
       continue
     }
 
-    // Province header
-    if (text.toLowerCase().startsWith('provincia de ') || text.toLowerCase().startsWith('provincia del ')) {
-      provincia = text
-      pendingNombre = ''
+    // Region header (title4)
+    const t4 = trContent.match(/<td[^>]*class="[^"]*title4[^"]*"[^>]*>([\s\S]*?)<\/td>/i)
+    if (t4) {
+      region = cleanText(t4[1])
+      provincia = null
       continue
     }
 
-    // PDF link row
-    if (text.startsWith('Ver PDF') || text.includes('Ver PDF')) {
-      const urlMatch = content.match(/href="([^"]+)"/i)
-      const cveMatch = text.match(/CVE-?(\d+)/i)
-      if (pendingNombre) {
+    // Province header (title5)
+    const t5 = trContent.match(/<td[^>]*class="[^"]*title5[^"]*"[^>]*>([\s\S]*?)<\/td>/i)
+    if (t5) {
+      provincia = cleanText(t5[1])
+      continue
+    }
+
+    // Entry row (class="content")
+    if (/\bclass="[^"]*\bcontent\b/.test(trAttrs) && categoria) {
+      const tds = [...trContent.matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/gi)]
+      if (tds.length >= 2) {
+        const nameOwner = cleanText(tds[0][2])
+        const pdfCell = tds[1][2]
+        const urlMatch = pdfCell.match(/href="([^"]+)"/i)
+        const cveMatch = cleanText(pdfCell).match(/CVE-?(\d+)/i)
+
+        const slashIdx = nameOwner.indexOf(' / ')
         entries.push({
           fecha,
           edicion,
           categoria,
-          nombre: pendingNombre,
-          titular: pendingTitular,
+          nombre: slashIdx >= 0 ? nameOwner.slice(0, slashIdx).trim() : nameOwner,
+          titular: slashIdx >= 0 ? nameOwner.slice(slashIdx + 3).trim() || null : null,
           region,
           provincia,
           cve: cveMatch?.[1] ?? null,
           url_pdf: urlMatch?.[1] ?? null,
         })
-        pendingNombre = ''
-        pendingTitular = null
       }
-      continue
-    }
-
-    // Entry row: "Nombre / Titular"
-    if (text.includes(' / ')) {
-      const idx = text.indexOf(' / ')
-      pendingNombre = text.slice(0, idx).trim()
-      pendingTitular = text.slice(idx + 3).trim() || null
     }
   }
 
   return { entries, fecha, edicion }
 }
 
-async function scrapeCategoria(subseccion: number, nombre: string): Promise<BoletinEntry[]> {
-  const url = `${BASE_URL}/?subseccion=${subseccion}`
+async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MinenBot/1.0)' },
-    next: { revalidate: 0 },
+    redirect: 'follow',
+    // @ts-expect-error next-specific
+    cache: 'no-store',
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching subseccion ${subseccion}`)
-  const html = await res.text()
-  const { entries, fecha, edicion } = parsePage(html, nombre)
-  return entries
+  if (!res.ok) throw new Error(`HTTP ${res.status} at ${url}`)
+  return res.text()
 }
 
-async function runSync(): Promise<{ total: number; inserted: number; fecha: string }> {
+async function runSync(): Promise<{ total: number; inserted: number; fecha: string; edicion: number }> {
   const admin = createAdminClient()
 
+  // 1. Fetch homepage to get current date and edition number
+  const homeHtml = await fetchHtml(BASE + '/')
+  const { fecha, edicion } = parsePage(homeHtml)
+
+  if (!edicion) throw new Error('No se pudo obtener el número de edición del boletín')
+
+  // 2. Build the date string for URLs (DD-MM-YYYY)
+  const [y, m, d] = fecha.split('-')
+  const dateParam = `${d}-${m}-${y}`
+
+  // 3. Scrape main page (pedimentos) + each subseccion
+  const urls = [
+    `${BASE}/?date=${dateParam}&edition=${edicion}`,
+    ...SUBSECCIONES.map(s => `${BASE}/?date=${dateParam}&edition=${edicion}&subseccion=${s}`),
+  ]
+
   const allEntries: BoletinEntry[] = []
-  for (const cat of CATEGORIAS) {
-    const entries = await scrapeCategoria(cat.subseccion, cat.nombre)
-    allEntries.push(...entries)
+  const seenCves = new Set<string>()
+
+  for (const url of urls) {
+    try {
+      const html = await fetchHtml(url)
+      const { entries } = parsePage(html)
+      for (const e of entries) {
+        // Dedup by CVE within this sync batch
+        if (e.cve) {
+          if (seenCves.has(e.cve)) continue
+          seenCves.add(e.cve)
+        }
+        allEntries.push(e)
+      }
+    } catch (err) {
+      console.warn(`[boletin/sync] Error fetching ${url}:`, err)
+    }
   }
 
   if (allEntries.length === 0) {
-    return { total: 0, inserted: 0, fecha: new Date().toISOString().split('T')[0] }
+    return { total: 0, inserted: 0, fecha, edicion }
   }
 
-  const fecha = allEntries[0].fecha
-
-  // Upsert: skip CVEs already in DB, insert new ones
+  // 4. Upsert — ignore duplicates by CVE
   const { data, error } = await admin
     .from('boletin_publicaciones')
     .upsert(allEntries, { onConflict: 'cve', ignoreDuplicates: true })
@@ -167,7 +187,7 @@ async function runSync(): Promise<{ total: number; inserted: number; fecha: stri
 
   if (error) throw new Error(error.message)
 
-  return { total: allEntries.length, inserted: data?.length ?? 0, fecha }
+  return { total: allEntries.length, inserted: data?.length ?? 0, fecha, edicion }
 }
 
 function isAuthorized(req: Request): boolean {
