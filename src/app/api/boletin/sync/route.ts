@@ -178,10 +178,25 @@ async function runSync(): Promise<{ total: number; inserted: number; fecha: stri
     return { total: 0, inserted: 0, fecha, edicion }
   }
 
-  // 4. Upsert — ignore duplicates by CVE
+  // 4. Fetch CVEs already stored for this date to avoid duplicates
+  const { data: existing } = await admin
+    .from('boletin_publicaciones')
+    .select('cve')
+    .eq('fecha', fecha)
+    .not('cve', 'is', null)
+
+  const existingCves = new Set((existing ?? []).map((r: { cve: string | null }) => r.cve))
+
+  const newEntries = allEntries.filter(e => !e.cve || !existingCves.has(e.cve))
+
+  if (newEntries.length === 0) {
+    return { total: allEntries.length, inserted: 0, fecha, edicion }
+  }
+
+  // 5. Insert only new entries
   const { data, error } = await admin
     .from('boletin_publicaciones')
-    .upsert(allEntries, { onConflict: 'cve', ignoreDuplicates: true })
+    .insert(newEntries)
     .select('id')
 
   if (error) throw new Error(error.message)
