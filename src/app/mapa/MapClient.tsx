@@ -405,12 +405,17 @@ export default function MapClient({
           .then(r => r.json())
           .then(data => {
             const feat = data.features?.find((f: any) => f.properties?.SITUACION_CONCESION !== 'ELIMINADA') ?? data.features?.[0]
-            if (!feat) return
-            const centroid = getCentroid(feat.geometry)
-            if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
-            setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
+            if (feat) {
+              const centroid = getCentroid(feat.geometry)
+              if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
+              setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
+            } else {
+              // No encontrado en SERNAGEOMIN (p.ej. pedimento pendiente):
+              // abrir panel igual con datos del boletín
+              openModal({ NOMBRE: buscarNombre })
+            }
           })
-          .catch(() => {})
+          .catch(() => openModal({ NOMBRE: buscarNombre }))
       }
 
       // ── Concessions layer ───────────────────────────────────────────────────
