@@ -73,3 +73,25 @@ export interface Database {
 }
 
 export type Profile = ProfileRow
+
+export type BoletinCategoria =
+  | 'Manifestación Minera'
+  | 'Solicitud de Mensura'
+  | 'Prórroga Exploración'
+  | 'Prórroga Explotación'
+  | 'Pedimento Minero'
+  | 'Otra'
+
+export type BoletinPublicacion = {
+  id: string
+  fecha: string
+  edicion: number
+  categoria: string
+  nombre: string
+  titular: string | null
+  region: string | null
+  provincia: string | null
+  cve: string | null
+  url_pdf: string | null
+  created_at: string
+}
