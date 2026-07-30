@@ -111,6 +111,8 @@ export default function MapClient({
   const mapActionsRef = useRef<{
     flyTo(lat: number, lng: number, zoom?: number): void
     openModal(props: Record<string, any>): void
+    zoomIn(): void
+    zoomOut(): void
   } | null>(null)
   const toggleFavRef  = useRef<((props: Record<string, any>) => void) | null>(null)
   const favoritosRef  = useRef<FavoritoRow[]>([])
@@ -130,7 +132,8 @@ export default function MapClient({
   const [concLoading, setConcLoading] = useState(false)
 
   // Favorites — seeded from server, mutated via Server Actions
-  const [favoritos, setFavoritos] = useState<FavoritoRow[]>(initialFavoritos)
+  const [favoritos,    setFavoritos]    = useState<FavoritoRow[]>(initialFavoritos)
+  const [loadingFavId, setLoadingFavId] = useState<string | null>(null)
 
   useEffect(() => { favoritosRef.current = favoritos }, [favoritos])
 
@@ -169,6 +172,41 @@ export default function MapClient({
   }, [profile])
 
   useEffect(() => { toggleFavRef.current = toggleFavorito }, [toggleFavorito])
+
+  // Click en favorito: busca datos completos en SERNAGEOMIN y abre el panel
+  const clickFavorito = useCallback(async (fav: FavoritoRow) => {
+    if (!mapActionsRef.current) return
+    setLoadingFavId(fav.id)
+    try {
+      const where = encodeURIComponent(`NUMERO_ROL = ${fav.numero_rol}`)
+      const url = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=1`
+      const res  = await fetch(url)
+      const data = await res.json()
+      if (data.features?.[0]) {
+        const feature  = data.features[0]
+        const centroid = getCentroid(feature.geometry)
+        if (centroid) mapActionsRef.current.flyTo(centroid[0], centroid[1], 15)
+        setTimeout(() => mapActionsRef.current?.openModal(feature.properties), centroid ? 900 : 0)
+      } else {
+        // Fallback: abrir con datos almacenados (sin coordenadas)
+        mapActionsRef.current.openModal({
+          NUMERO_ROL: fav.numero_rol, DV_ROL: fav.dv_rol,
+          NOMBRE: fav.nombre, TIPO_CONCESION: fav.tipo_concesion,
+          SITUACION_CONCESION: fav.situacion_concesion,
+          TITULAR_NOMBRE: fav.titular_nombre, COMUNA: fav.comuna,
+        })
+      }
+    } catch {
+      mapActionsRef.current.openModal({
+        NUMERO_ROL: fav.numero_rol, DV_ROL: fav.dv_rol,
+        NOMBRE: fav.nombre, TIPO_CONCESION: fav.tipo_concesion,
+        SITUACION_CONCESION: fav.situacion_concesion,
+        TITULAR_NOMBRE: fav.titular_nombre, COMUNA: fav.comuna,
+      })
+    } finally {
+      setLoadingFavId(null)
+    }
+  }, [])
 
   // Geocoder with debounce
   useEffect(() => {
@@ -236,7 +274,7 @@ export default function MapClient({
       const L = (await import('leaflet')).default
       await import('leaflet/dist/leaflet.css')
 
-      const map = L.map(mapRef.current!, { zoomControl: true }).setView([-33.45, -70.65], 11)
+      const map = L.map(mapRef.current!, { zoomControl: false }).setView([-33.45, -70.65], 11)
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19,
@@ -315,8 +353,10 @@ export default function MapClient({
       }
 
       mapActionsRef.current = {
-        flyTo:      (lat, lng, zoom = 15) => map.flyTo([lat, lng], zoom),
+        flyTo:    (lat, lng, zoom = 15) => map.flyTo([lat, lng], zoom),
         openModal,
+        zoomIn:   () => map.zoomIn(),
+        zoomOut:  () => map.zoomOut(),
       }
 
       // ── Concessions layer ───────────────────────────────────────────────────
@@ -395,6 +435,30 @@ export default function MapClient({
 
         {/* Map (full canvas, sidebar overlays) */}
         <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+
+        {/* Custom zoom control — se mueve con el sidebar */}
+        <div style={{
+          position: 'absolute',
+          left: (sidebarOpen ? SIDEBAR_W : 0) + 10,
+          top: 10, zIndex: 900,
+          transition: 'left .22s cubic-bezier(.4,0,.2,1)',
+          display: 'flex', flexDirection: 'column',
+          background: '#141928', border: '1px solid #2a3154',
+          borderRadius: 6, overflow: 'hidden',
+          boxShadow: '0 2px 12px rgba(0,0,0,.4)',
+        }}>
+          {[{label: '+', fn: 'zoomIn'}, {label: '−', fn: 'zoomOut'}].map(({ label, fn }, i) => (
+            <button key={fn}
+              onClick={() => (mapActionsRef.current as any)?.[fn]?.()}
+              style={{
+                width: 30, height: 30, background: 'none', border: 'none',
+                borderBottom: i === 0 ? '1px solid #2a3154' : 'none',
+                color: '#dde2f5', cursor: 'pointer',
+                fontSize: 18, lineHeight: 1, fontWeight: 300,
+              }}
+            >{label}</button>
+          ))}
+        </div>
 
         {/* ── Left Sidebar ── */}
         <div style={{
@@ -548,13 +612,26 @@ export default function MapClient({
                 ) : (
                   favoritos.map(fav => (
                     <div key={fav.id} style={{
-                      borderRadius: 6, padding: '8px 10px', marginBottom: 4,
+                      borderRadius: 6, marginBottom: 4,
                       background: '#141928', border: '1px solid #2e3247',
-                      display: 'flex', alignItems: 'flex-start', gap: 8,
+                      display: 'flex', alignItems: 'flex-start',
+                      opacity: loadingFavId === fav.id ? 0.5 : 1,
+                      transition: 'opacity .15s',
                     }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Área clickeable — abre el panel de detalle */}
+                      <button
+                        onClick={() => clickFavorito(fav)}
+                        disabled={loadingFavId !== null}
+                        style={{
+                          flex: 1, minWidth: 0, background: 'none', border: 'none',
+                          cursor: loadingFavId ? 'wait' : 'pointer', textAlign: 'left',
+                          padding: '8px 6px 8px 10px',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(100,138,255,.06)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
                         <div style={{ fontSize: 11, fontWeight: 600, color: '#dde2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {fav.nombre || 'Sin nombre'}
+                          {loadingFavId === fav.id ? '…' : (fav.nombre || 'Sin nombre')}
                         </div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 2, alignItems: 'center' }}>
                           <span style={{ fontSize: 9, color: '#7a82a8' }}>
@@ -572,14 +649,15 @@ export default function MapClient({
                             {fav.titular_nombre}
                           </div>
                         )}
-                      </div>
+                      </button>
+                      {/* Botón eliminar */}
                       <button
                         title="Quitar de favoritos"
                         onClick={async () => {
                           setFavoritos(prev => prev.filter(f => f.id !== fav.id))
                           await removeFavorito(fav.numero_rol)
                         }}
-                        style={{ background: 'none', border: 'none', color: '#404870', cursor: 'pointer', fontSize: 13, flexShrink: 0, padding: '2px 4px', lineHeight: 1 }}
+                        style={{ background: 'none', border: 'none', color: '#404870', cursor: 'pointer', fontSize: 13, flexShrink: 0, padding: '8px 8px', lineHeight: 1, alignSelf: 'center' }}
                         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
                         onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#404870')}
                       >✕</button>
