@@ -64,6 +64,22 @@ export interface Database {
         Update: Record<string, never>
         Relationships: []
       }
+      boletin_publicaciones: {
+        Row: BoletinPublicacion
+        Insert: {
+          fecha: string
+          edicion: number
+          categoria: string
+          nombre: string
+          titular?: string | null
+          region?: string | null
+          provincia?: string | null
+          cve?: string | null
+          url_pdf?: string | null
+        }
+        Update: Record<string, never>
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>
