@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Profile, FavoritoRow } from '@/types/database'
 import AppShell from '@/components/layout/AppShell'
-import { createClient } from '@/lib/supabase/client'
+import { addFavorito, removeFavorito } from './favorites'
 
 // ─── Color mapping (matches SERNAGEOMIN viewer) ───────────────────────────────
 
@@ -96,7 +96,13 @@ const SIDEBAR_W = 268
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MapClient({ profile }: { profile: Profile | null }) {
+export default function MapClient({
+  profile,
+  initialFavoritos,
+}: {
+  profile: Profile | null
+  initialFavoritos: FavoritoRow[]
+}) {
   const mapRef      = useRef<HTMLDivElement>(null)
   const panelRef    = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -123,40 +129,44 @@ export default function MapClient({ profile }: { profile: Profile | null }) {
   const [concResults, setConcResults] = useState<ConcResult[]>([])
   const [concLoading, setConcLoading] = useState(false)
 
-  // Favorites
-  const [favoritos, setFavoritos] = useState<FavoritoRow[]>([])
-
-  const supabase = profile ? createClient() : null
+  // Favorites — seeded from server, mutated via Server Actions
+  const [favoritos, setFavoritos] = useState<FavoritoRow[]>(initialFavoritos)
 
   useEffect(() => { favoritosRef.current = favoritos }, [favoritos])
 
-  // Load favorites on mount
-  useEffect(() => {
-    if (!supabase) return
-    supabase.from('favoritos').select('*').order('created_at', { ascending: false })
-      .then(({ data }) => { if (data) setFavoritos(data as FavoritoRow[]) })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Toggle favorite (also called from inside Leaflet via ref)
   const toggleFavorito = useCallback(async (props: Record<string, any>) => {
-    if (!supabase || !profile) return
+    if (!profile) return
     const rol   = String(props.NUMERO_ROL)
     const isFav = favoritosRef.current.some(f => f.numero_rol === rol)
+
     if (isFav) {
-      await supabase.from('favoritos').delete().eq('user_id', profile.id).eq('numero_rol', rol)
+      const existing = favoritosRef.current.find(f => f.numero_rol === rol)
       setFavoritos(prev => prev.filter(f => f.numero_rol !== rol))
+      const { error } = await removeFavorito(rol)
+      if (error) {
+        // revert optimistic update on failure
+        if (existing) setFavoritos(prev => [existing, ...prev])
+      }
     } else {
-      const { data } = await supabase.from('favoritos').insert({
-        user_id: profile.id, numero_rol: rol,
-        dv_rol: props.DV_ROL ?? null, nombre: props.NOMBRE ?? null,
+      const { data, error } = await addFavorito({
+        numero_rol: rol,
+        dv_rol: props.DV_ROL ?? null,
+        nombre: props.NOMBRE ?? null,
         tipo_concesion: props.TIPO_CONCESION ?? null,
         situacion_concesion: props.SITUACION_CONCESION ?? null,
         titular_nombre: props.TITULAR_NOMBRE ?? null,
         comuna: props.COMUNA ?? null,
-      }).select().single()
-      if (data) setFavoritos(prev => [data as FavoritoRow, ...prev])
+      })
+      if (error) {
+        console.error('Error guardando favorito:', error)
+        // revert optimistic button state
+        const favBtn = document.getElementById('modal-fav-btn') as HTMLButtonElement | null
+        if (favBtn) { favBtn.textContent = '☆'; favBtn.style.color = '#7a82a8' }
+        return
+      }
+      if (data) setFavoritos(prev => [data, ...prev])
     }
-  }, [profile, supabase])
+  }, [profile])
 
   useEffect(() => { toggleFavRef.current = toggleFavorito }, [toggleFavorito])
 
@@ -566,9 +576,8 @@ export default function MapClient({ profile }: { profile: Profile | null }) {
                       <button
                         title="Quitar de favoritos"
                         onClick={async () => {
-                          if (!supabase) return
-                          await supabase.from('favoritos').delete().eq('id', fav.id)
                           setFavoritos(prev => prev.filter(f => f.id !== fav.id))
+                          await removeFavorito(fav.numero_rol)
                         }}
                         style={{ background: 'none', border: 'none', color: '#404870', cursor: 'pointer', fontSize: 13, flexShrink: 0, padding: '2px 4px', lineHeight: 1 }}
                         onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
