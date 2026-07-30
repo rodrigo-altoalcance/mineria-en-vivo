@@ -1,0 +1,30 @@
+name: Boletín Oficial de Minería — Sync diario
+
+on:
+  schedule:
+    # Lunes a viernes a las 09:00 hora Chile (UTC-3 en verano, UTC-4 en invierno)
+    # 12:00 UTC cubre ambas zonas horarias
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sync
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "x-sync-secret: ${{ secrets.BOLETIN_SYNC_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/boletin/sync")
+          echo "HTTP status: $response"
+          if [ "$response" != "200" ]; then
+            echo "Sync failed with status $response"
+            exit 1
+          fi
+
+      - name: Log result
+        run: |
+          curl -s \
+            -H "x-sync-secret: ${{ secrets.BOLETIN_SYNC_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/boletin/sync" | python3 -m json.tool

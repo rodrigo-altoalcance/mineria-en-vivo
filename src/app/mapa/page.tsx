@@ -6,7 +6,13 @@ import type { FavoritoRow, ProfileRow } from '@/types/database'
 
 export const dynamic = 'force-dynamic'
 
-export default async function MapaPage() {
+export default async function MapaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ nombre?: string }>
+}) {
+  const { nombre: buscarNombre } = await searchParams
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
@@ -41,6 +47,7 @@ export default async function MapaPage() {
     <MapClient
       profile={profile as ProfileRow | null}
       initialFavoritos={(favoritos ?? []) as FavoritoRow[]}
+      buscarNombre={buscarNombre}
     />
   )
 }

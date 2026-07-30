@@ -99,9 +99,11 @@ const SIDEBAR_W = 268
 export default function MapClient({
   profile,
   initialFavoritos,
+  buscarNombre,
 }: {
   profile: Profile | null
   initialFavoritos: FavoritoRow[]
+  buscarNombre?: string
 }) {
   const mapRef      = useRef<HTMLDivElement>(null)
   const panelRef    = useRef<HTMLDivElement>(null)
@@ -337,16 +339,52 @@ export default function MapClient({
             fieldRow('Fojas', FOJAS) +
             fieldRow('Año', ANO_INSCRIPCION)
           )}
-          <div style="background:rgba(217,119,6,.05);border:1px solid rgba(217,119,6,.2);border-radius:8px;padding:12px">
-            <div style="font-size:10px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
-              Proceso Registral
-              <span style="background:rgba(217,119,6,.1);color:#d97706;font-size:9px;padding:2px 6px;border-radius:20px;margin-left:6px">Boletín — próximamente</span>
+          <div id="modal-boletin" style="background:rgba(100,138,255,.05);border:1px solid rgba(100,138,255,.15);border-radius:8px;padding:12px">
+            <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
+              Boletín Oficial
             </div>
-            ${pendingRow('Juzgado')}
-            ${pendingRow('Causa ROL')}
-            ${pendingRow('Conservador')}
-            ${pendingRow('Cronología')}
+            <div style="font-size:11px;color:#404870;font-style:italic">Cargando…</div>
           </div>`
+
+        // Async: load boletín data for this concession
+        if (NOMBRE) {
+          fetch(`/api/boletin/concesion?nombre=${encodeURIComponent(NOMBRE)}`)
+            .then(r => r.json())
+            .then((pubs: any[]) => {
+              const el = document.getElementById('modal-boletin')
+              if (!el) return
+              if (!pubs.length) {
+                el.innerHTML = `<div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial</div>
+                  <div style="font-size:11px;color:#404870;font-style:italic">Sin publicaciones en el boletín</div>`
+                return
+              }
+              const latest = pubs[0]
+              const boletinLink = latest.url_pdf
+                ? `<a href="${latest.url_pdf}" target="_blank" rel="noopener" style="color:#648aff;font-size:11px;text-decoration:none">Ver PDF →</a>`
+                : ''
+              const historial = pubs.length > 1
+                ? `<div style="margin-top:8px;font-size:10px;color:#404870">${pubs.length} publicaciones en total</div>`
+                : ''
+              el.innerHTML = `
+                <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial ${boletinLink}</div>
+                ${fieldRow('Categoría', latest.categoria)}
+                ${latest.juzgado ? fieldRow('Juzgado', latest.juzgado) : ''}
+                ${latest.causa_rol ? fieldRow('Causa ROL', latest.causa_rol) : ''}
+                ${latest.titular ? fieldRow('Titular', latest.titular) : ''}
+                ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}
+                ${latest.norte ? fieldRow('Norte UTM', latest.norte) : ''}
+                ${latest.este ? fieldRow('Este UTM', latest.este) : ''}
+                ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
+                ${latest.inscripcion_fs ? fieldRow('FS / N°', latest.inscripcion_fs) : ''}
+                ${fieldRow('Publicado', latest.fecha)}
+                ${historial}`
+            })
+            .catch(() => {
+              const el = document.getElementById('modal-boletin')
+              if (el) el.innerHTML = `<div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial</div>
+                <div style="font-size:11px;color:#404870;font-style:italic">No disponible</div>`
+            })
+        }
 
         backdrop.style.display = 'block'
         panel.style.transform  = 'translateX(0)'
@@ -357,6 +395,22 @@ export default function MapClient({
         openModal,
         zoomIn:   () => map.zoomIn(),
         zoomOut:  () => map.zoomOut(),
+      }
+
+      // ── Auto-search from boletín link ─────────────────────────────────────────
+      if (buscarNombre) {
+        const where = encodeURIComponent(`UPPER(NOMBRE) LIKE UPPER('%${buscarNombre}%')`)
+        const url = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=5`
+        fetch(url)
+          .then(r => r.json())
+          .then(data => {
+            const feat = data.features?.find((f: any) => f.properties?.SITUACION_CONCESION !== 'ELIMINADA') ?? data.features?.[0]
+            if (!feat) return
+            const centroid = getCentroid(feat.geometry)
+            if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
+            setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
+          })
+          .catch(() => {})
       }
 
       // ── Concessions layer ───────────────────────────────────────────────────

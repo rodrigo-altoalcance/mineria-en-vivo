@@ -109,5 +109,21 @@ export type BoletinPublicacion = {
   provincia: string | null
   cve: string | null
   url_pdf: string | null
+  // Campos extraídos del PDF
+  doc: string | null
+  juzgado: string | null
+  causa_rol: string | null
+  comuna: string | null
+  norte: string | null
+  este: string | null
+  alto: string | null
+  ancho: string | null
+  area_ha: string | null
+  orden: string | null
+  inscripcion_fs: string | null
+  inscripcion_date: string | null
+  conservador: string | null
+  observaciones: string | null
+  pdf_parsed: boolean | null
   created_at: string
 }
