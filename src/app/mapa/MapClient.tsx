@@ -424,6 +424,36 @@ export default function MapClient({
       let abortCtrl: AbortController | null = null
       const statusEl = document.getElementById('map-status')!
 
+      function renderLayer(data: any) {
+        if (concesionesLayer) { map.removeLayer(concesionesLayer); concesionesLayer = null }
+        if (!data.features?.length) {
+          statusEl.textContent = 'Sin concesiones en esta área'
+          statusEl.style.color = '#7a82a8'
+          return
+        }
+        concesionesLayer = L.geoJSON(data, {
+          style: f => {
+            const c = colorByTipo(f?.properties ?? {})
+            return { color: c, weight: 1.5, fillColor: c, fillOpacity: 0.22, opacity: 0.9 }
+          },
+          onEachFeature(feature, layer) {
+            layer.on('click', () => openModal(feature.properties))
+            layer.on('mouseover', function(this: L.Path) { this.setStyle({ weight: 3, fillOpacity: 0.45 }) })
+            layer.on('mouseout',  function(this: L.Path) { if (concesionesLayer) concesionesLayer.resetStyle(this) })
+          },
+        }).addTo(map)
+        const n = data.features.length
+        statusEl.textContent = `${n} concesión${n !== 1 ? 'es' : ''}`
+        statusEl.style.color = '#22c55e'
+      }
+
+      async function loadFromSernageomin(bbox: string, signal: AbortSignal) {
+        const where = encodeURIComponent(`SITUACION_CONCESION <> 'ELIMINADA'`)
+        const url   = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&geometry=${encodeURIComponent(bbox)}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&f=geojson&outSR=4326&resultRecordCount=2000`
+        const res  = await fetch(url, { signal })
+        return res.json()
+      }
+
       async function loadConcesiones() {
         if (map.getZoom() < 10) {
           if (concesionesLayer) { map.removeLayer(concesionesLayer); concesionesLayer = null }
@@ -432,46 +462,44 @@ export default function MapClient({
         }
         abortCtrl?.abort()
         abortCtrl = new AbortController()
+        const signal = abortCtrl.signal
 
-        statusEl.textContent = 'Consultando SERNAGEOMIN…'
+        statusEl.textContent = 'Cargando concesiones…'
         statusEl.style.display = 'block'
         statusEl.style.color = '#60a5fa'
 
         const b    = map.getBounds()
         const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`
-        const where = encodeURIComponent(`SITUACION_CONCESION <> 'ELIMINADA'`)
-        const url = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&geometry=${encodeURIComponent(bbox)}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&f=geojson&outSR=4326&resultRecordCount=2000`
 
         try {
-          const res  = await fetch(url, { signal: abortCtrl.signal })
+          // Intentar primero desde nuestra caché en Supabase
+          const res  = await fetch(`/api/concesiones?bbox=${bbox}`, { signal })
           const data = await res.json()
-          if (concesionesLayer) { map.removeLayer(concesionesLayer); concesionesLayer = null }
 
-          if (!data.features?.length) {
-            statusEl.textContent = 'Sin concesiones en esta área'
-            statusEl.style.color = '#7a82a8'
-            return
+          if (data.source === 'supabase' || data.source === 'empty') {
+            if (data.source === 'empty') {
+              // Tabla vacía aún — fallback a SERNAGEOMIN
+              statusEl.textContent = 'Consultando SERNAGEOMIN…'
+              const fallback = await loadFromSernageomin(bbox, signal)
+              renderLayer(fallback)
+            } else {
+              renderLayer(data)
+            }
+          } else {
+            // Error en nuestra API — fallback a SERNAGEOMIN
+            const fallback = await loadFromSernageomin(bbox, signal)
+            renderLayer(fallback)
           }
-
-          concesionesLayer = L.geoJSON(data, {
-            style: f => {
-              const c = colorByTipo(f?.properties ?? {})
-              return { color: c, weight: 1.5, fillColor: c, fillOpacity: 0.22, opacity: 0.9 }
-            },
-            onEachFeature(feature, layer) {
-              layer.on('click', () => openModal(feature.properties))
-              layer.on('mouseover', function(this: L.Path) { this.setStyle({ weight: 3, fillOpacity: 0.45 }) })
-              layer.on('mouseout',  function(this: L.Path) { if (concesionesLayer) concesionesLayer.resetStyle(this) })
-            },
-          }).addTo(map)
-
-          const n = data.features.length
-          statusEl.textContent = `${n} concesión${n !== 1 ? 'es' : ''}`
-          statusEl.style.color = '#22c55e'
         } catch (err: any) {
           if (err?.name !== 'AbortError') {
-            statusEl.textContent = 'Error al conectar con SERNAGEOMIN'
-            statusEl.style.color = '#ef4444'
+            // Último recurso: intentar SERNAGEOMIN directo
+            try {
+              const fallback = await loadFromSernageomin(bbox, abortCtrl.signal)
+              renderLayer(fallback)
+            } catch {
+              statusEl.textContent = 'Error cargando concesiones'
+              statusEl.style.color = '#ef4444'
+            }
           }
         }
       }
