@@ -13,22 +13,22 @@ function colorByTipo(props: Record<string, any>): string {
   const origen = props.ORIGEN || ''
   const sal    = props.ESTACAMENTO_SALITRERO
 
-  if (sal === 'S')                                        return '#00BCD4'
-  if (tipo === 'EXPLOTACION' && origen.includes('1932')) return '#E53935'
-  if (tipo === 'EXPLOTACION' && sit === 'EN TRAMITE')    return '#CE93D8'
-  if (tipo === 'EXPLOTACION' && sit === 'CONSTITUIDA')   return '#1565C0'
-  if (tipo === 'EXPLORACION' && sit === 'EN TRAMITE')    return '#C6E900'
-  if (tipo === 'EXPLORACION' && sit === 'CONSTITUIDA')   return '#4CAF50'
-  return '#648aff'
+  if (sal === 'S')                                        return '#00E5FF'
+  if (tipo === 'EXPLOTACION' && origen.includes('1932')) return '#FF1744'
+  if (tipo === 'EXPLOTACION' && sit === 'EN TRAMITE')    return '#E040FB'
+  if (tipo === 'EXPLOTACION' && sit === 'CONSTITUIDA')   return '#2979FF'
+  if (tipo === 'EXPLORACION' && sit === 'EN TRAMITE')    return '#FFD600'
+  if (tipo === 'EXPLORACION' && sit === 'CONSTITUIDA')   return '#00E676'
+  return '#7C4DFF'
 }
 
 const LEGEND = [
-  { color: '#00BCD4', label: 'Estac. Salitreros'           },
-  { color: '#E53935', label: 'Explotación Cód.1932'        },
-  { color: '#CE93D8', label: 'Explotación 1983 en trámite' },
-  { color: '#1565C0', label: 'Explotación 1983 Constituída'},
-  { color: '#C6E900', label: 'Pedimentos en trámite'       },
-  { color: '#4CAF50', label: 'Exploración Constituída'     },
+  { color: '#00E5FF', label: 'Estac. Salitreros'           },
+  { color: '#FF1744', label: 'Explotación Cód.1932'        },
+  { color: '#E040FB', label: 'Explotación 1983 en trámite' },
+  { color: '#2979FF', label: 'Explotación 1983 Constituída'},
+  { color: '#FFD600', label: 'Pedimentos en trámite'       },
+  { color: '#00E676', label: 'Exploración Constituída'     },
 ]
 
 // ─── Modal HTML helpers ───────────────────────────────────────────────────────
@@ -282,6 +282,43 @@ export default function MapClient({
         maxZoom: 19,
       }).addTo(map)
 
+      // Geolocalización del usuario al abrir el mapa
+      if (navigator?.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          pos => map.setView([pos.coords.latitude, pos.coords.longitude], 12),
+          () => {},
+          { timeout: 8000 },
+        )
+      }
+
+      // CSS para etiquetas de concesiones
+      const styleEl = document.createElement('style')
+      styleEl.textContent = `
+        .concesion-label {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          font-size: 9px;
+          font-weight: 700;
+          color: #fff;
+          text-shadow: 0 0 4px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,1), 1px 1px 2px rgba(0,0,0,.8);
+          white-space: nowrap;
+          pointer-events: none;
+          padding: 0 !important;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+        .concesion-label::before { display: none !important; }
+        .hide-labels .concesion-label { display: none !important; }
+      `
+      document.head.appendChild(styleEl)
+      mapRef.current!.classList.add('hide-labels')
+      map.on('zoomend', () => {
+        const z = map.getZoom()
+        if (z >= 13) mapRef.current!.classList.remove('hide-labels')
+        else mapRef.current!.classList.add('hide-labels')
+      })
+
       function openModal(props: Record<string, any>) {
         const {
           NUMERO_ROL, DV_ROL, NOMBRE, HECTAREAS,
@@ -410,9 +447,18 @@ export default function MapClient({
               if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
               setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
             } else {
-              // No encontrado en SERNAGEOMIN (p.ej. pedimento pendiente):
-              // abrir panel igual con datos del boletín
-              openModal({ NOMBRE: buscarNombre })
+              // No en SERNAGEOMIN — buscar centroide en nuestra caché Supabase
+              fetch(`/api/concesiones/centroid?nombre=${encodeURIComponent(buscarNombre)}`)
+                .then(r => r.json())
+                .then(cent => {
+                  if (cent?.lat && cent?.lng) {
+                    map.flyTo([cent.lat, cent.lng], 15)
+                    setTimeout(() => openModal(cent), 900)
+                  } else {
+                    openModal({ NOMBRE: buscarNombre })
+                  }
+                })
+                .catch(() => openModal({ NOMBRE: buscarNombre }))
             }
           })
           .catch(() => openModal({ NOMBRE: buscarNombre }))
@@ -437,6 +483,14 @@ export default function MapClient({
             return { color: c, weight: 1.5, fillColor: c, fillOpacity: 0.22, opacity: 0.9 }
           },
           onEachFeature(feature, layer) {
+            const nombre = feature.properties?.NOMBRE
+            if (nombre) {
+              layer.bindTooltip(nombre, {
+                permanent: true,
+                direction: 'center',
+                className: 'concesion-label',
+              })
+            }
             layer.on('click', () => openModal(feature.properties))
             layer.on('mouseover', function(this: L.Path) { this.setStyle({ weight: 3, fillOpacity: 0.45 }) })
             layer.on('mouseout',  function(this: L.Path) { if (concesionesLayer) concesionesLayer.resetStyle(this) })
