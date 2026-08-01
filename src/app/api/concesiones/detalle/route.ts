@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import https from 'https'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,9 +20,25 @@ function tipoNum(tipo: string): string {
   return tipo === 'EXPLOTACION' ? '2' : '1'
 }
 
+// SERNAGEOMIN usa certificado con cadena incompleta → rejectUnauthorized: false
+function fetchSernageomin(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    https.get(url, { rejectUnauthorized: false, headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
+      let data = ''
+      res.on('data', chunk => { data += chunk })
+      res.on('end', () => resolve(data))
+    }).on('error', reject)
+  })
+}
+
 function parsePayments(html: string): Pago[] {
   const rows: Pago[] = []
-  const tbodyMatch = html.match(/<tbody>([\s\S]*?)<\/tbody>/i)
+
+  // La tabla de pagos tiene id="pagostabla" — buscar su <tbody> específicamente
+  const tableIdx = html.indexOf('pagostabla')
+  if (tableIdx === -1) return rows
+
+  const tbodyMatch = html.slice(tableIdx).match(/<tbody>([\s\S]*?)<\/tbody>/i)
   if (!tbodyMatch) return rows
 
   for (const trMatch of tbodyMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)) {
@@ -64,34 +81,28 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* ignorar error de caché, ir a scraping */ }
 
-  // Scraping desde SERNAGEOMIN
+  // Scraping desde SERNAGEOMIN (cert chain incompleta → https nativo)
   const rolFmt = String(numeroRol).padStart(9, '0')
   const url    = `https://portalsdnmext.sernageomin.cl/propiedadminera/consulta-pago-query?tipo=${tipoNum(tipo)}&rol=${rolFmt}`
 
   try {
-    const res = await fetch(url, {
-      cache: 'no-store',
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    })
-    if (!res.ok) return NextResponse.json(null)
-
-    const html  = await res.text()
+    const html  = await fetchSernageomin(url)
     const pagos = parsePayments(html)
 
     const detalle = { numero_rol: numeroRol, tipo, pagos, scraped_at: new Date().toISOString() }
 
-    // Guardar en caché
-    await fetch(`${SUPABASE_URL}/rest/v1/concesiones_detalle`, {
+    // Guardar en caché (fallo no bloquea la respuesta)
+    fetch(`${SUPABASE_URL}/rest/v1/concesiones_detalle`, {
       method: 'POST',
       headers: {
-        apikey:        SERVICE_KEY,
-        Authorization: `Bearer ${SERVICE_KEY}`,
+        apikey:         SERVICE_KEY,
+        Authorization:  `Bearer ${SERVICE_KEY}`,
         'Content-Type': 'application/json',
         Prefer:         'resolution=merge-duplicates,return=minimal',
       },
       body: JSON.stringify([detalle]),
       cache: 'no-store',
-    })
+    }).catch(() => {})
 
     return NextResponse.json(detalle)
   } catch {
