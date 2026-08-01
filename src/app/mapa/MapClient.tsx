@@ -381,6 +381,12 @@ export default function MapClient({
               Boletín Oficial
             </div>
             <div style="font-size:11px;color:#404870;font-style:italic">Cargando…</div>
+          </div>
+          <div id="modal-pagos" style="background:rgba(0,230,118,.04);border:1px solid rgba(0,230,118,.15);border-radius:8px;padding:12px;margin-top:10px">
+            <div style="font-size:10px;font-weight:700;color:#00E676;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
+              Pago de Patentes
+            </div>
+            <div style="font-size:11px;color:#404870;font-style:italic">Cargando…</div>
           </div>`
 
         // Async: load boletín data for this concession
@@ -421,6 +427,49 @@ export default function MapClient({
               if (el) el.innerHTML = `<div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial</div>
                 <div style="font-size:11px;color:#404870;font-style:italic">No disponible</div>`
             })
+        }
+
+        // Async: load payment data (with Supabase cache)
+        if (NUMERO_ROL) {
+          const rolFmt  = String(NUMERO_ROL).padStart(9, '0')
+          const tipoFmt = encodeURIComponent(TIPO_CONCESION || 'EXPLOTACION')
+          fetch(`/api/concesiones/detalle?rol=${rolFmt}&tipo=${tipoFmt}`)
+            .then(r => r.json())
+            .then((det: any) => {
+              const el = document.getElementById('modal-pagos')
+              if (!el) return
+              if (!det?.pagos?.length) {
+                el.innerHTML = `<div style="font-size:10px;font-weight:700;color:#00E676;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Pago de Patentes</div>
+                  <div style="font-size:11px;color:#404870;font-style:italic">Sin pagos registrados</div>`
+                return
+              }
+              const rows = [...det.pagos]
+                .sort((a: any, b: any) => parseInt(b.periodo) - parseInt(a.periodo))
+                .map((p: any) => `<tr>
+                  <td style="font-size:11px;color:#c0c9f0;padding:3px 6px">${p.periodo}</td>
+                  <td style="font-size:11px;color:#c0c9f0;padding:3px 6px">${p.fecha}</td>
+                  <td style="font-size:11px;color:#7a82a8;padding:3px 6px;text-align:right">${p.hectareas} hás</td>
+                  <td style="font-size:11px;color:#00E676;padding:3px 6px;text-align:right;font-weight:600">${p.valor}</td>
+                </tr>`).join('')
+              el.innerHTML = `
+                <div style="font-size:10px;font-weight:700;color:#00E676;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Pago de Patentes</div>
+                <table style="width:100%;border-collapse:collapse">
+                  <thead><tr>
+                    <th style="font-size:10px;color:#7a82a8;padding:3px 6px;text-align:left;font-weight:500">Año</th>
+                    <th style="font-size:10px;color:#7a82a8;padding:3px 6px;text-align:left;font-weight:500">Fecha</th>
+                    <th style="font-size:10px;color:#7a82a8;padding:3px 6px;text-align:right;font-weight:500">Sup.</th>
+                    <th style="font-size:10px;color:#7a82a8;padding:3px 6px;text-align:right;font-weight:500">Valor</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>`
+            })
+            .catch(() => {
+              const el = document.getElementById('modal-pagos')
+              if (el) el.style.display = 'none'
+            })
+        } else {
+          const el = document.getElementById('modal-pagos')
+          if (el) el.style.display = 'none'
         }
 
         backdrop.style.display = 'block'
