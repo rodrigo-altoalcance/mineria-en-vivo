@@ -325,6 +325,7 @@ export default function MapClient({
           SITUACION_CONCESION, TIPO_CONCESION,
           COMUNA, TITULAR_NOMBRE, TITULAR_RUT, TITULAR_DV, TITULAR_DIVISION,
           FECHA_VENCIMIENTO, NRO_INSCRIPCION, FOJAS, ANO_INSCRIPCION,
+          ID_CONCESION, HUSO,
         } = props
 
         const rol       = NUMERO_ROL ? `${NUMERO_ROL}${DV_ROL ? '-' + DV_ROL : ''}` : null
@@ -376,6 +377,10 @@ export default function MapClient({
             fieldRow('Fojas', FOJAS) +
             fieldRow('Año', ANO_INSCRIPCION)
           )}
+          <div id="modal-vertices" style="display:none;margin-bottom:20px">
+            <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">Coordenadas UTM</div>
+            <div id="modal-vertices-body"></div>
+          </div>
           <div id="modal-boletin" style="background:rgba(100,138,255,.05);border:1px solid rgba(100,138,255,.15);border-radius:8px;padding:12px">
             <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">
               Boletín Oficial
@@ -388,6 +393,29 @@ export default function MapClient({
             </div>
             <div style="font-size:11px;color:#404870;font-style:italic">Cargando…</div>
           </div>`
+
+        // Async: load UTM vertices from SERNAGEOMIN Layer 0
+        if (ID_CONCESION) {
+          fetch(`/api/concesiones/vertices?id=${encodeURIComponent(ID_CONCESION)}`)
+            .then(r => r.json())
+            .then((verts: any[]) => {
+              const container = document.getElementById('modal-vertices')
+              const body = document.getElementById('modal-vertices-body')
+              if (!container || !body || !verts.length) return
+              const husoLabel = HUSO ? `Huso ${HUSO} Sur · PSAD56` : 'PSAD56'
+              body.innerHTML =
+                `<div style="font-size:10px;color:#7a82a8;margin-bottom:6px">${husoLabel}</div>` +
+                verts.map(v =>
+                  `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(46,50,71,.5)">
+                    <span style="font-size:11px;font-weight:600;color:#7a82a8;width:24px">L${v.n}</span>
+                    <span style="font-size:12px;color:#dde2f5">N ${Number(v.norte).toLocaleString('es-CL', {maximumFractionDigits:0})}</span>
+                    <span style="font-size:12px;color:#dde2f5">E ${Number(v.este).toLocaleString('es-CL', {maximumFractionDigits:0})}</span>
+                  </div>`
+                ).join('')
+              container.style.display = 'block'
+            })
+            .catch(() => {})
+        }
 
         // Async: load boletín data for this concession
         if (NOMBRE) {
@@ -405,22 +433,36 @@ export default function MapClient({
               const boletinLink = latest.url_pdf
                 ? `<a href="${latest.url_pdf}" target="_blank" rel="noopener" style="color:#648aff;font-size:11px;text-decoration:none">Ver PDF →</a>`
                 : ''
-              const historial = pubs.length > 1
-                ? `<div style="margin-top:8px;font-size:10px;color:#404870">${pubs.length} publicaciones en total</div>`
-                : ''
+
+              // Show all publications as a cronología timeline
+              const catLabel = (cat: string) => {
+                if (cat.includes('MANIFESTAC')) return 'Manifestación'
+                if (cat.includes('MENSURA')) return 'Mensura'
+                if (cat.includes('SENTENCIA')) return 'Sentencia'
+                if (cat.includes('REMATE')) return 'Remate'
+                if (cat.includes('INSCRIPCION') || cat.includes('INSCRIPCIÓN')) return 'Inscripción'
+                const w = cat.split(' ').slice(0,2).join(' ')
+                return w.charAt(0) + w.slice(1).toLowerCase()
+              }
+              const allRows = pubs.map(p =>
+                `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(46,50,71,.4)">
+                  <span style="font-size:11px;color:#c0c9f0;flex:1">${catLabel(p.categoria || '')}</span>
+                  <span style="font-size:10px;color:#7a82a8;flex-shrink:0">${p.fecha}</span>
+                  ${p.url_pdf ? `<a href="${p.url_pdf}" target="_blank" rel="noopener" style="color:#648aff;font-size:10px;text-decoration:none;margin-left:8px">PDF</a>` : ''}
+                </div>`
+              ).join('')
+
               el.innerHTML = `
                 <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial ${boletinLink}</div>
-                ${fieldRow('Categoría', latest.categoria)}
                 ${latest.juzgado ? fieldRow('Juzgado', latest.juzgado) : ''}
                 ${latest.causa_rol ? fieldRow('Causa ROL', latest.causa_rol) : ''}
-                ${latest.titular ? fieldRow('Titular', latest.titular) : ''}
                 ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}
-                ${latest.norte ? fieldRow('Norte UTM', latest.norte) : ''}
-                ${latest.este ? fieldRow('Este UTM', latest.este) : ''}
-                ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
                 ${latest.inscripcion_fs ? fieldRow('FS / N°', latest.inscripcion_fs) : ''}
-                ${fieldRow('Publicado', latest.fecha)}
-                ${historial}`
+                ${latest.area_ha ? fieldRow('Área boletín (há)', latest.area_ha) : ''}
+                <div style="margin-top:8px">
+                  <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Publicaciones</div>
+                  ${allRows}
+                </div>`
             })
             .catch(() => {
               const el = document.getElementById('modal-boletin')
