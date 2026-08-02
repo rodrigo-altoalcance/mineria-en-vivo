@@ -62,7 +62,7 @@ export async function GET() {
   const admin = createAdminClient()
 
   // Get the most recent record per concesion name that has coordinates
-  const { data, error } = await admin
+  const { data, error } = await (admin
     .from('boletin_publicaciones')
     .select('nombre, titular, categoria, fecha, norte, este, alto, ancho, huso, area_ha, region, provincia, conservador, inscripcion_fs, juzgado, causa_rol')
     .not('norte', 'is', null)
@@ -72,7 +72,7 @@ export async function GET() {
     .not('ancho', 'is', null)
     .eq('pdf_parsed', true)
     .order('fecha', { ascending: false })
-    .limit(500)
+    .limit(500) as any)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -80,7 +80,7 @@ export async function GET() {
   const seen = new Set<string>()
   const features: any[] = []
 
-  for (const row of (data ?? [])) {
+  for (const row of ((data ?? []) as any[])) {
     const key = (row.nombre ?? '').toUpperCase()
     if (seen.has(key)) continue
     seen.add(key)
