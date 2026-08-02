@@ -47,8 +47,8 @@ function pendingRow(label: string) {
     <span style="font-size:11px;font-style:italic;color:#d97706">Pendiente</span></div>`
 }
 
-function sectionHTML(title: string, rows: string) {
-  return `<div style="margin-bottom:20px">
+function sectionHTML(title: string, rows: string, id?: string) {
+  return `<div ${id ? `id="${id}"` : ''} style="margin-bottom:20px">
     <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">${title}</div>
     ${rows}</div>`
 }
@@ -365,17 +365,20 @@ export default function MapClient({
             fieldRow('Rol / DV', rol) +
             fieldRow('Superficie', hectareas) +
             fieldRow('Vencimiento', FECHA_VENCIMIENTO) +
-            fieldRow('Comuna', COMUNA)
+            fieldRow('Comuna', COMUNA),
+            'modal-sec-ident'
           )}
           ${sectionHTML('Titular',
             fieldRow('Nombre', TITULAR_NOMBRE) +
             fieldRow('RUT', rut) +
-            fieldRow('División', TITULAR_DIVISION)
+            fieldRow('División', TITULAR_DIVISION),
+            'modal-sec-titular'
           )}
           ${sectionHTML('Inscripción CBR',
             fieldRow('N° inscripción', NRO_INSCRIPCION) +
             fieldRow('Fojas', FOJAS) +
-            fieldRow('Año', ANO_INSCRIPCION)
+            fieldRow('Año', ANO_INSCRIPCION),
+            'modal-sec-inscripcion'
           )}
           <div id="modal-vertices" style="display:none;margin-bottom:20px">
             <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">Coordenadas UTM</div>
@@ -458,11 +461,58 @@ export default function MapClient({
                 ${latest.causa_rol ? fieldRow('Causa ROL', latest.causa_rol) : ''}
                 ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}
                 ${latest.inscripcion_fs ? fieldRow('FS / N°', latest.inscripcion_fs) : ''}
-                ${latest.area_ha ? fieldRow('Área boletín (há)', latest.area_ha) : ''}
+                ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
                 <div style="margin-top:8px">
                   <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Publicaciones</div>
                   ${allRows}
                 </div>`
+
+              // Si SERNAGEOMIN no tiene datos (pedimento nuevo), rellenar secciones superiores
+              if (!NUMERO_ROL) {
+                // Identificación: superficie y región/provincia
+                const secIdent = document.getElementById('modal-sec-ident')
+                if (secIdent) {
+                  const superficieVal = latest.area_ha ? `${Number(latest.area_ha).toLocaleString('es-CL')} há` : null
+                  const lugarVal = latest.provincia
+                    ? latest.provincia.replace(/^Provincia de /i, '')
+                    : (latest.region ? latest.region.replace(/^REGIÓN DE /i, '') : null)
+                  secIdent.innerHTML = `
+                    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">Identificación</div>
+                    ${fieldRow('Rol / DV', null)}
+                    ${fieldRow('Superficie', superficieVal)}
+                    ${fieldRow('Vencimiento', null)}
+                    ${fieldRow('Zona', lugarVal)}`
+                }
+
+                // Titular
+                const secTitular = document.getElementById('modal-sec-titular')
+                if (secTitular && latest.titular) {
+                  secTitular.innerHTML = `
+                    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">Titular</div>
+                    ${fieldRow('Nombre', latest.titular)}
+                    ${fieldRow('RUT', null)}
+                    ${fieldRow('División', null)}`
+                }
+
+                // Inscripción CBR — parsear inscripcion_fs "Fjs: 1392 N°: 770"
+                const secInscr = document.getElementById('modal-sec-inscripcion')
+                if (secInscr && (latest.inscripcion_fs || latest.inscripcion_date)) {
+                  let nroInscr: string | null = null
+                  let fojas: string | null = null
+                  if (latest.inscripcion_fs) {
+                    const nroMatch = latest.inscripcion_fs.match(/N[°o]?[:\s]*(\d+)/i)
+                    const fjsMatch = latest.inscripcion_fs.match(/Fj[ao]s?[:\s]*(\d+)/i)
+                    nroInscr = nroMatch?.[1] ?? null
+                    fojas    = fjsMatch?.[1] ?? null
+                  }
+                  secInscr.innerHTML = `
+                    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7a82a8;margin-bottom:8px">Inscripción CBR</div>
+                    ${fieldRow('N° inscripción', nroInscr)}
+                    ${fieldRow('Fojas', fojas)}
+                    ${fieldRow('Año', latest.inscripcion_date)}
+                    ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}`
+                }
+              }
             })
             .catch(() => {
               const el = document.getElementById('modal-boletin')
