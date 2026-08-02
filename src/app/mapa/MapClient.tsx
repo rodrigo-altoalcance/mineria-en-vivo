@@ -469,22 +469,43 @@ export default function MapClient({
 
               // Si SERNAGEOMIN no tiene datos (pedimento nuevo), rellenar secciones superiores
               if (!NUMERO_ROL) {
-                // Deducir situación desde categoría del boletín
-                const cat = (latest.categoria || '').toUpperCase()
-                let sitInferida = 'EN TRAMITE'
-                let tipoInferido = ''
-                if (cat.includes('PEDIMENTO') || cat.includes('MANIFESTAC')) {
-                  sitInferida = 'EN TRAMITE'; tipoInferido = 'Pedimento'
-                } else if (cat.includes('PERTENENCIA')) {
-                  sitInferida = 'CONSTITUIDA'; tipoInferido = 'Explotación'
-                } else if (cat.includes('MENSURA')) {
-                  sitInferida = 'EN TRAMITE'; tipoInferido = 'Exploración'
-                } else if (cat.includes('SENTENCIA') || cat.includes('INSCRIPCION')) {
-                  sitInferida = 'CONSTITUIDA'; tipoInferido = 'Exploración'
+                // Deducir estado y tipo analizando TODAS las publicaciones disponibles.
+                // Las categorías del BOM tienen una jerarquía legal:
+                //   PEDIMENTO / MANIFESTACION → etapa inicial (exploración en trámite)
+                //   MENSURA                   → etapa intermedia (aún en trámite)
+                //   SENTENCIA                 → fallo judicial (puede constituir)
+                //   INSCRIPCION               → inscrita en CBR (constituida)
+                //   PERTENENCIA               → explotación (puede estar en trámite o constituida)
+                const cats = pubs.map((p: any) => (p.categoria || '').toUpperCase())
+                const hasInscripcion  = cats.some((c: string) => c.includes('INSCRIPCION') || c.includes('INSCRIPCIÓN'))
+                const hasSentencia    = cats.some((c: string) => c.includes('SENTENCIA'))
+                const hasMensura      = cats.some((c: string) => c.includes('MENSURA'))
+                const hasPertenencia  = cats.some((c: string) => c.includes('PERTENENCIA'))
+                const hasPedimento    = cats.some((c: string) => c.includes('PEDIMENTO') || c.includes('MANIFESTAC'))
+
+                let sitInferida: string
+                let tipoInferido: string
+
+                if (hasInscripcion) {
+                  sitInferida  = 'CONSTITUIDA'
+                  tipoInferido = hasPertenencia ? 'Explotación' : 'Exploración'
+                } else if (hasSentencia) {
+                  sitInferida  = 'EN TRAMITE'   // sentencia publicada pero aún no inscrita
+                  tipoInferido = hasPertenencia ? 'Explotación' : 'Exploración'
+                } else if (hasMensura) {
+                  sitInferida  = 'EN TRAMITE'
+                  tipoInferido = 'Exploración'
+                } else if (hasPertenencia) {
+                  sitInferida  = 'EN TRAMITE'
+                  tipoInferido = 'Explotación'
+                } else {
+                  sitInferida  = 'EN TRAMITE'
+                  tipoInferido = hasPedimento ? 'Exploración' : 'Exploración'
                 }
+
                 const sitStylesMap: Record<string, { bg: string; color: string }> = {
-                  'CONSTITUIDA': { bg: 'rgba(34,197,94,.12)',   color: '#22c55e' },
-                  'EN TRAMITE':  { bg: 'rgba(234,179,8,.12)',   color: '#eab308' },
+                  'CONSTITUIDA': { bg: 'rgba(34,197,94,.12)',  color: '#22c55e' },
+                  'EN TRAMITE':  { bg: 'rgba(234,179,8,.12)', color: '#eab308' },
                 }
                 const s = sitStylesMap[sitInferida] ?? { bg: 'rgba(234,179,8,.12)', color: '#eab308' }
                 const badgeEl2 = document.getElementById('modal-badge')
