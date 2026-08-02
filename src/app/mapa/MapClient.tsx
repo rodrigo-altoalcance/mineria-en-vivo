@@ -469,6 +469,32 @@ export default function MapClient({
 
               // Si SERNAGEOMIN no tiene datos (pedimento nuevo), rellenar secciones superiores
               if (!NUMERO_ROL) {
+                // Deducir situación desde categoría del boletín
+                const cat = (latest.categoria || '').toUpperCase()
+                let sitInferida = 'EN TRAMITE'
+                let tipoInferido = ''
+                if (cat.includes('PEDIMENTO') || cat.includes('MANIFESTAC')) {
+                  sitInferida = 'EN TRAMITE'; tipoInferido = 'Pedimento'
+                } else if (cat.includes('PERTENENCIA')) {
+                  sitInferida = 'CONSTITUIDA'; tipoInferido = 'Explotación'
+                } else if (cat.includes('MENSURA')) {
+                  sitInferida = 'EN TRAMITE'; tipoInferido = 'Exploración'
+                } else if (cat.includes('SENTENCIA') || cat.includes('INSCRIPCION')) {
+                  sitInferida = 'CONSTITUIDA'; tipoInferido = 'Exploración'
+                }
+                const sitStylesMap: Record<string, { bg: string; color: string }> = {
+                  'CONSTITUIDA': { bg: 'rgba(34,197,94,.12)',   color: '#22c55e' },
+                  'EN TRAMITE':  { bg: 'rgba(234,179,8,.12)',   color: '#eab308' },
+                }
+                const s = sitStylesMap[sitInferida] ?? { bg: 'rgba(234,179,8,.12)', color: '#eab308' }
+                const badgeEl2 = document.getElementById('modal-badge')
+                if (badgeEl2) {
+                  badgeEl2.textContent      = sitInferida
+                  badgeEl2.style.background = s.bg
+                  badgeEl2.style.color      = s.color
+                }
+                const tipoEl = document.getElementById('modal-tipo')
+                if (tipoEl && tipoInferido) tipoEl.textContent = tipoInferido
                 // Identificación: superficie y región/provincia
                 const secIdent = document.getElementById('modal-sec-ident')
                 if (secIdent) {
@@ -500,8 +526,8 @@ export default function MapClient({
                   let nroInscr: string | null = null
                   let fojas: string | null = null
                   if (latest.inscripcion_fs) {
-                    const nroMatch = latest.inscripcion_fs.match(/N[°o]?[:\s]*(\d+)/i)
-                    const fjsMatch = latest.inscripcion_fs.match(/Fj[ao]s?[:\s]*(\d+)/i)
+                    const nroMatch = latest.inscripcion_fs.match(/N[°º]?[:\s]*(\d+)/i)
+                    const fjsMatch = latest.inscripcion_fs.match(/Fj[^:\d]*[:\s]*(\d+)/i)
                     nroInscr = nroMatch?.[1] ?? null
                     fojas    = fjsMatch?.[1] ?? null
                   }
