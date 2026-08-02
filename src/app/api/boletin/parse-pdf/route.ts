@@ -157,7 +157,7 @@ export async function GET(req: NextRequest) {
 
   const { error: updateErr } = await admin
     .from('boletin_publicaciones')
-    .update(update)
+    .update(update as any)
     .eq('id', pub.id)
 
   if (updateErr) {
