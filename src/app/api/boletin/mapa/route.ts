@@ -68,8 +68,6 @@ export async function GET() {
     .not('norte', 'is', null)
     .not('este', 'is', null)
     .not('huso', 'is', null)
-    .not('alto', 'is', null)
-    .not('ancho', 'is', null)
     .eq('pdf_parsed', true)
     .order('fecha', { ascending: false })
     .limit(500) as any)
@@ -87,9 +85,11 @@ export async function GET() {
 
     const norte = Number(row.norte)
     const este  = Number(row.este)
-    const alto  = Number(row.alto)
-    const ancho = Number(row.ancho)
     const huso  = Number(row.huso)
+    // Fall back to square derived from area when dimensions are missing
+    const defaultSide = row.area_ha ? Math.sqrt(Number(row.area_ha) * 10000) : 1000
+    const alto  = row.alto  != null ? Number(row.alto)  : defaultSide
+    const ancho = row.ancho != null ? Number(row.ancho) : defaultSide
 
     // Compute 4 corners of the mining rectangle (UTM)
     // L1=NW, L2=NE, L3=SE, L4=SW

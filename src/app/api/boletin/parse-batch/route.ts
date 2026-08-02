@@ -104,25 +104,28 @@ export async function GET(req: NextRequest) {
       const extracted = JSON.parse(json[0])
       const { cronologia, ...rest } = extracted
 
+      const updatePayload: Record<string, any> = {
+        pdf_parsed:       true,
+        juzgado:          rest.juzgado         ?? null,
+        causa_rol:        rest.causa_rol        ?? null,
+        conservador:      rest.conservador      ?? null,
+        inscripcion_fs:   rest.inscripcion_fs   ?? null,
+        inscripcion_date: rest.inscripcion_date ?? null,
+        area_ha:          rest.area_ha          ?? null,
+        orden:            rest.orden            ?? null,
+        observaciones:    rest.observaciones    ?? null,
+        doc:              cronologia ? JSON.stringify(cronologia) : null,
+      }
+      // Only overwrite coordinates if newly extracted — never replace existing value with null
+      if (rest.norte != null) updatePayload.norte = rest.norte
+      if (rest.este  != null) updatePayload.este  = rest.este
+      if (rest.alto  != null) updatePayload.alto  = rest.alto
+      if (rest.ancho != null) updatePayload.ancho = rest.ancho
+      if (rest.huso  != null) updatePayload.huso  = rest.huso
+
       await admin
         .from('boletin_publicaciones')
-        .update({
-          pdf_parsed:       true,
-          juzgado:          rest.juzgado         ?? null,
-          causa_rol:        rest.causa_rol        ?? null,
-          conservador:      rest.conservador      ?? null,
-          inscripcion_fs:   rest.inscripcion_fs   ?? null,
-          inscripcion_date: rest.inscripcion_date ?? null,
-          area_ha:          rest.area_ha          ?? null,
-          norte:            rest.norte            ?? null,
-          este:             rest.este             ?? null,
-          alto:             rest.alto             ?? null,
-          ancho:            rest.ancho            ?? null,
-          huso:             rest.huso             ?? null,
-          orden:            rest.orden            ?? null,
-          observaciones:    rest.observaciones    ?? null,
-          doc:              cronologia ? JSON.stringify(cronologia) : null,
-        } as any)
+        .update(updatePayload as any)
         .eq('id', pub.id)
 
       results.push({ nombre: pub.nombre, cve: pub.cve ?? '', ok: true })

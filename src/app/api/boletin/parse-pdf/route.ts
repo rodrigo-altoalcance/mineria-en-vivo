@@ -147,15 +147,16 @@ export async function GET(req: NextRequest) {
     inscripcion_fs:  rest.inscripcion_fs   ?? null,
     inscripcion_date: rest.inscripcion_date ?? null,
     area_ha:         rest.area_ha          ?? null,
-    norte:           rest.norte            ?? null,
-    este:            rest.este             ?? null,
-    alto:            rest.alto             ?? null,
-    ancho:           rest.ancho            ?? null,
-    huso:            rest.huso             ?? null,
     orden:           rest.orden            ?? null,
     observaciones:   rest.observaciones    ?? null,
     doc:             cronologia ? JSON.stringify(cronologia) : null,
   }
+  // Only overwrite coordinates if newly extracted — never replace existing value with null
+  if (rest.norte != null) update.norte = rest.norte
+  if (rest.este  != null) update.este  = rest.este
+  if (rest.alto  != null) update.alto  = rest.alto
+  if (rest.ancho != null) update.ancho = rest.ancho
+  if (rest.huso  != null) update.huso  = rest.huso
 
   const { error: updateErr } = await admin
     .from('boletin_publicaciones')
