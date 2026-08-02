@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
   // Find the publication
   let query = admin.from('boletin_publicaciones').select('*')
   if (cve) query = query.eq('cve', cve)
-  else query = query.eq('id', id)
+  else if (id) query = query.eq('id', id)
   const { data: rows, error } = await query.limit(1).single()
 
   if (error || !rows) {
