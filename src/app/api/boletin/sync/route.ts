@@ -135,17 +135,25 @@ async function fetchHtml(url: string): Promise<string> {
   return res.text()
 }
 
-async function runSync(): Promise<{ total: number; inserted: number; fecha: string; edicion: number }> {
+async function runSync(targetDate?: string): Promise<{ total: number; inserted: number; fecha: string; edicion: number }> {
   const admin = createAdminClient()
 
-  // 1. Fetch homepage to get current date and edition number
-  const homeHtml = await fetchHtml(BASE + '/')
+  // 1. Fetch homepage (or date-specific page) to discover edition number
+  let discoveryUrl = BASE + '/'
+  if (targetDate) {
+    const [y, m, d] = targetDate.split('-')
+    discoveryUrl = `${BASE}/?date=${d}-${m}-${y}`
+  }
+  const homeHtml = await fetchHtml(discoveryUrl)
   const { fecha, edicion } = parsePage(homeHtml)
 
   if (!edicion) throw new Error('No se pudo obtener el número de edición del boletín')
 
+  // Use targetDate if provided, else what the page reports
+  const syncFecha = targetDate ?? fecha
+
   // 2. Build the date string for URLs (DD-MM-YYYY)
-  const [y, m, d] = fecha.split('-')
+  const [y, m, d] = syncFecha.split('-')
   const dateParam = `${d}-${m}-${y}`
 
   // 3. Scrape main page (pedimentos) + each subseccion
@@ -175,14 +183,14 @@ async function runSync(): Promise<{ total: number; inserted: number; fecha: stri
   }
 
   if (allEntries.length === 0) {
-    return { total: 0, inserted: 0, fecha, edicion }
+    return { total: 0, inserted: 0, fecha: syncFecha, edicion }
   }
 
   // 4. Fetch CVEs already stored for this date to avoid duplicates
   const { data: existing } = await admin
     .from('boletin_publicaciones')
     .select('cve')
-    .eq('fecha', fecha)
+    .eq('fecha', syncFecha)
     .not('cve', 'is', null)
 
   const existingCves = new Set((existing ?? []).map((r: { cve: string | null }) => r.cve))
@@ -190,18 +198,18 @@ async function runSync(): Promise<{ total: number; inserted: number; fecha: stri
   const newEntries = allEntries.filter(e => !e.cve || !existingCves.has(e.cve))
 
   if (newEntries.length === 0) {
-    return { total: allEntries.length, inserted: 0, fecha, edicion }
+    return { total: allEntries.length, inserted: 0, fecha: syncFecha, edicion }
   }
 
-  // 5. Insert only new entries
+  // 5. Insert only new entries (override fecha to ensure correct date)
   const { data, error } = await admin
     .from('boletin_publicaciones')
-    .insert(newEntries)
+    .insert(newEntries.map(e => ({ ...e, fecha: syncFecha })))
     .select('id')
 
   if (error) throw new Error(error.message)
 
-  return { total: allEntries.length, inserted: data?.length ?? 0, fecha, edicion }
+  return { total: allEntries.length, inserted: data?.length ?? 0, fecha: syncFecha, edicion }
 }
 
 function isAuthorized(req: Request): boolean {
@@ -217,7 +225,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
-    const result = await runSync()
+    const url = new URL(req.url)
+    const fecha = url.searchParams.get('fecha') ?? undefined
+    const result = await runSync(fecha)
     return NextResponse.json({ ok: true, ...result })
   } catch (err) {
     console.error('[boletin/sync]', err)
