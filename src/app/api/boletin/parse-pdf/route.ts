@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Error OCR: ${e}` }, { status: 500 })
   }
 
-  // Build update payload
+  // Build update payload (doc stored as JSON string to avoid column type issues)
   const { cronologia, ...rest } = extracted
   const update: Record<string, any> = {
     pdf_parsed: true,
@@ -152,7 +152,7 @@ export async function GET(req: NextRequest) {
     ancho:           rest.ancho            ?? null,
     orden:           rest.orden            ?? null,
     observaciones:   rest.observaciones    ?? null,
-    doc:             cronologia            ?? null,
+    doc:             cronologia ? JSON.stringify(cronologia) : null,
   }
 
   const { error: updateErr } = await admin
