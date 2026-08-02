@@ -23,12 +23,13 @@ function colorByTipo(props: Record<string, any>): string {
 }
 
 const LEGEND = [
-  { color: '#00E5FF', label: 'Estac. Salitreros'           },
-  { color: '#FF1744', label: 'Explotación Cód.1932'        },
-  { color: '#E040FB', label: 'Explotación 1983 en trámite' },
-  { color: '#2979FF', label: 'Explotación 1983 Constituída'},
-  { color: '#FFD600', label: 'Pedimentos en trámite'       },
-  { color: '#00E676', label: 'Exploración Constituída'     },
+  { color: '#00E5FF', label: 'Estac. Salitreros'              },
+  { color: '#FF1744', label: 'Explotación Cód.1932'           },
+  { color: '#E040FB', label: 'Explotación 1983 en trámite'    },
+  { color: '#2979FF', label: 'Explotación 1983 Constituída'   },
+  { color: '#FFD600', label: 'Pedimentos en trámite'          },
+  { color: '#00E676', label: 'Exploración Constituída'        },
+  { color: '#FFD600', label: 'Pedimento boletín (- - -)', dashed: true },
 ]
 
 // ─── Modal HTML helpers ───────────────────────────────────────────────────────
@@ -342,8 +343,14 @@ export default function MapClient({
 
         const isFav = favoritosRef.current.some(f => f.numero_rol === String(NUMERO_ROL))
 
+        const isBoletinOnly = props._source === 'boletin'
+
         document.getElementById('modal-title')!.textContent = NOMBRE || 'Concesión sin nombre'
         document.getElementById('modal-tipo')!.textContent  = TIPO_CONCESION || ''
+        const fuenteEl = document.getElementById('modal-fuente')
+        if (fuenteEl) fuenteEl.textContent = isBoletinOnly
+          ? 'Fuente: Boletín Oficial de Minería'
+          : 'Fuente: SERNAGEOMIN · FeatureServer WGS84'
 
         const badgeEl = document.getElementById('modal-badge')!
         badgeEl.textContent      = sit
@@ -746,6 +753,31 @@ export default function MapClient({
         }
       }
 
+      // ── Boletín layer (pedimentos no en SERNAGEOMIN) ──────────────────────────
+      fetch('/api/boletin/mapa')
+        .then(r => r.json())
+        .then((geojson: any) => {
+          if (!geojson?.features?.length) return
+          L.geoJSON(geojson, {
+            style: () => ({
+              color: '#FFD600', weight: 1.5, dashArray: '5,4',
+              fillColor: '#FFD600', fillOpacity: 0.18, opacity: 0.85,
+            }),
+            onEachFeature(feature, layer) {
+              const nombre = feature.properties?.NOMBRE
+              if (nombre) {
+                layer.bindTooltip(nombre, {
+                  permanent: true, direction: 'center', className: 'concesion-label',
+                })
+              }
+              layer.on('click', () => openModal(feature.properties))
+              layer.on('mouseover', function(this: L.Path) { this.setStyle({ weight: 3, fillOpacity: 0.38 }) })
+              layer.on('mouseout',  function(this: L.Path) { this.setStyle({ color: '#FFD600', weight: 1.5, dashArray: '5,4', fillColor: '#FFD600', fillOpacity: 0.18, opacity: 0.85 }) })
+            },
+          }).addTo(map)
+        })
+        .catch(() => {})
+
       map.on('moveend zoomend', () => {
         if (debounce) clearTimeout(debounce)
         debounce = setTimeout(loadConcesiones, 600)
@@ -1036,9 +1068,13 @@ export default function MapClient({
           boxShadow: '0 4px 24px rgba(0,0,0,.55)',
         }}>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: '#7a82a8', marginBottom: 8 }}>Tipo de concesión</div>
-          {LEGEND.map(({ color, label }) => (
+          {LEGEND.map(({ color, label, dashed }: any) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, fontSize: 11, color: '#dde2f5' }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+              <div style={{
+                width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                background: dashed ? 'transparent' : color,
+                border: dashed ? `2px dashed ${color}` : 'none',
+              }} />
               {label}
             </div>
           ))}
@@ -1081,7 +1117,7 @@ export default function MapClient({
               <span id="modal-badge" style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, letterSpacing: '.08em', textTransform: 'uppercase' }} />
               <span id="modal-tipo" style={{ fontSize: 11, color: '#7a82a8' }} />
             </div>
-            <p style={{ fontSize: 10, color: '#404870', margin: 0 }}>Fuente: SERNAGEOMIN · FeatureServer WGS84</p>
+            <p id="modal-fuente" style={{ fontSize: 10, color: '#404870', margin: 0 }}>Fuente: SERNAGEOMIN · FeatureServer WGS84</p>
           </div>
 
           <div id="modal-body" style={{ flex: 1, overflowY: 'auto', padding: 16 }} />

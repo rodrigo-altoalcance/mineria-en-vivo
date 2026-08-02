@@ -40,6 +40,7 @@ Extrae los siguientes campos. Si un campo no está, devuelve null. Responde SOLO
   "este": coordenada_este_L1_como_número,
   "alto": diferencia_norte_L1_menos_L4_como_número,
   "ancho": diferencia_este_L2_menos_L1_como_número,
+  "huso": número_de_huso_utm_entero,
   "orden": "número de orden o null",
   "observaciones": "resumen breve con titular, RUT, tipo de concesión y ubicación",
   "cronologia": {
@@ -53,7 +54,9 @@ Extrae los siguientes campos. Si un campo no está, devuelve null. Responde SOLO
     "plazo_mensura": "DD-MM-YYYY o null",
     "plazo_vigencia": "DD-MM-YYYY o null"
   }
-}`
+}
+
+Para "huso": busca el número de huso UTM (ej: "Huso 19", "Huso 18"). En Chile norte suele ser 19, centro-sur suele ser 18. Extrae el número entero.`
 
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
@@ -115,6 +118,7 @@ export async function GET(req: NextRequest) {
           este:             rest.este             ?? null,
           alto:             rest.alto             ?? null,
           ancho:            rest.ancho            ?? null,
+          huso:             rest.huso             ?? null,
           orden:            rest.orden            ?? null,
           observaciones:    rest.observaciones    ?? null,
           doc:              cronologia ? JSON.stringify(cronologia) : null,
