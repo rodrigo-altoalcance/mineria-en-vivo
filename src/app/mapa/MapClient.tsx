@@ -116,7 +116,9 @@ export default function MapClient({
     openModal(props: Record<string, any>): void
     zoomIn(): void
     zoomOut(): void
+    setSatellite(on: boolean): void
   } | null>(null)
+  const [satView, setSatView] = useState(false)
   const toggleFavRef  = useRef<((props: Record<string, any>) => void) | null>(null)
   const favoritosRef  = useRef<FavoritoRow[]>([])
 
@@ -299,10 +301,17 @@ export default function MapClient({
       await import('leaflet/dist/leaflet.css')
 
       const map = L.map(mapRef.current!, { zoomControl: false }).setView([-33.45, -70.65], 11)
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+
+      const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19,
-      }).addTo(map)
+      })
+      const satelliteLayer = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { attribution: '© Esri World Imagery', maxZoom: 19 }
+      )
+      let activeBaseLayer = streetLayer
+      streetLayer.addTo(map)
 
       // Geolocalización del usuario al abrir el mapa
       if (navigator?.geolocation) {
@@ -648,6 +657,12 @@ export default function MapClient({
         openModal,
         zoomIn:   () => map.zoomIn(),
         zoomOut:  () => map.zoomOut(),
+        setSatellite: (on: boolean) => {
+          map.removeLayer(activeBaseLayer)
+          activeBaseLayer = on ? satelliteLayer : streetLayer
+          activeBaseLayer.addTo(map)
+          activeBaseLayer.bringToBack()
+        },
       }
 
       // ── Auto-search from boletín link ─────────────────────────────────────────
@@ -849,6 +864,31 @@ export default function MapClient({
             >{label}</button>
           ))}
         </div>
+
+        {/* Satellite toggle */}
+        <button
+          onClick={() => {
+            const next = !satView
+            setSatView(next)
+            mapActionsRef.current?.setSatellite(next)
+          }}
+          title={satView ? 'Ver mapa de calles' : 'Ver satélite'}
+          style={{
+            position: 'absolute',
+            left: (sidebarOpen ? SIDEBAR_W : 0) + 10,
+            top: 60, zIndex: 900,
+            transition: 'left .22s cubic-bezier(.4,0,.2,1)',
+            width: 30, height: 30,
+            background: satView ? '#648aff' : '#141928',
+            border: '1px solid #2a3154',
+            borderRadius: 6,
+            color: satView ? '#00164d' : '#dde2f5',
+            cursor: 'pointer',
+            fontSize: 14,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 2px 12px rgba(0,0,0,.4)',
+          }}
+        >🛰</button>
 
         {/* ── Left Sidebar ── */}
         <div style={{
