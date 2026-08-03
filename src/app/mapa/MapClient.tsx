@@ -686,17 +686,25 @@ export default function MapClient({
       let abortCtrl: AbortController | null = null
       const statusEl = document.getElementById('map-status')!
 
-      function renderLayer(data: any) {
+      function renderLayer(data: any, zoom?: number) {
         if (concesionesLayer) { map.removeLayer(concesionesLayer); concesionesLayer = null }
         if (!data.features?.length) {
           statusEl.textContent = 'Sin concesiones en esta área'
           statusEl.style.color = '#7a82a8'
           return
         }
+        const z = zoom ?? map.getZoom()
+        const isOverview = z < 10
         concesionesLayer = L.geoJSON(data, {
           style: f => {
             const c = colorByTipo(f?.properties ?? {})
-            return { color: c, weight: 1.5, fillColor: c, fillOpacity: 0.22, opacity: 0.9 }
+            return {
+              color: c,
+              weight: isOverview ? 0.6 : 1.5,
+              fillColor: c,
+              fillOpacity: isOverview ? 0.35 : 0.22,
+              opacity: isOverview ? 0.7 : 0.9,
+            }
           },
           onEachFeature(feature, layer) {
             const nombre = feature.properties?.NOMBRE
@@ -717,17 +725,18 @@ export default function MapClient({
         statusEl.style.color = '#22c55e'
       }
 
-      async function loadFromSernageomin(bbox: string, signal: AbortSignal) {
+      async function loadFromSernageomin(bbox: string, signal: AbortSignal, limit = 2000) {
         const where = encodeURIComponent(`SITUACION_CONCESION <> 'ELIMINADA'`)
-        const url   = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&geometry=${encodeURIComponent(bbox)}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&f=geojson&outSR=4326&resultRecordCount=2000`
+        const url   = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&geometry=${encodeURIComponent(bbox)}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&f=geojson&outSR=4326&resultRecordCount=${limit}`
         const res  = await fetch(url, { signal })
         return res.json()
       }
 
       async function loadConcesiones() {
-        if (map.getZoom() < 10) {
+        const zoom = map.getZoom()
+        if (zoom < 7) {
           if (concesionesLayer) { map.removeLayer(concesionesLayer); concesionesLayer = null }
-          statusEl.textContent = ''; statusEl.style.display = 'none'
+          statusEl.textContent = 'Acerca el mapa para ver concesiones'; statusEl.style.display = 'block'; statusEl.style.color = '#404870'
           return
         }
         abortCtrl?.abort()
@@ -740,6 +749,8 @@ export default function MapClient({
 
         const b    = map.getBounds()
         const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`
+        // Menos registros en zoom lejano para evitar saturar el mapa
+        const limit = zoom >= 10 ? 2000 : zoom >= 9 ? 800 : 300
 
         try {
           // Intentar primero desde nuestra caché en Supabase
@@ -748,24 +759,21 @@ export default function MapClient({
 
           if (data.source === 'supabase' || data.source === 'empty') {
             if (data.source === 'empty') {
-              // Tabla vacía aún — fallback a SERNAGEOMIN
               statusEl.textContent = 'Consultando SERNAGEOMIN…'
-              const fallback = await loadFromSernageomin(bbox, signal)
-              renderLayer(fallback)
+              const fallback = await loadFromSernageomin(bbox, signal, limit)
+              renderLayer(fallback, zoom)
             } else {
-              renderLayer(data)
+              renderLayer(data, zoom)
             }
           } else {
-            // Error en nuestra API — fallback a SERNAGEOMIN
-            const fallback = await loadFromSernageomin(bbox, signal)
-            renderLayer(fallback)
+            const fallback = await loadFromSernageomin(bbox, signal, limit)
+            renderLayer(fallback, zoom)
           }
         } catch (err: any) {
           if (err?.name !== 'AbortError') {
-            // Último recurso: intentar SERNAGEOMIN directo
             try {
-              const fallback = await loadFromSernageomin(bbox, abortCtrl.signal)
-              renderLayer(fallback)
+              const fallback = await loadFromSernageomin(bbox, abortCtrl.signal, limit)
+              renderLayer(fallback, zoom)
             } catch {
               statusEl.textContent = 'Error cargando concesiones'
               statusEl.style.color = '#ef4444'
