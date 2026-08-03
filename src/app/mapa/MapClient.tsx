@@ -762,9 +762,11 @@ export default function MapClient({
       }
 
       async function loadFromSernageomin(bbox: string, signal: AbortSignal, limit = 2000) {
-        const where = encodeURIComponent(`SITUACION_CONCESION <> 'ELIMINADA'`)
-        const url   = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&geometry=${encodeURIComponent(bbox)}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&f=geojson&outSR=4326&resultRecordCount=${limit}`
-        const res  = await fetch(url, { signal })
+        // Pasa por nuestro endpoint que también guarda en caché (lazy caching)
+        const res = await fetch(
+          `/api/concesiones/sernageomin?bbox=${encodeURIComponent(bbox)}&limit=${limit}`,
+          { signal }
+        )
         return res.json()
       }
 
