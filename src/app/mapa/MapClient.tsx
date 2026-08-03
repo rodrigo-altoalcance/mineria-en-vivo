@@ -678,7 +678,7 @@ export default function MapClient({
               if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
               setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
             } else {
-              // No en SERNAGEOMIN — buscar centroide en nuestra caché Supabase
+              // No en SERNAGEOMIN — buscar centroide en caché Supabase
               fetch(`/api/concesiones/centroid?nombre=${encodeURIComponent(buscarNombre)}`)
                 .then(r => r.json())
                 .then(cent => {
@@ -686,7 +686,24 @@ export default function MapClient({
                     map.flyTo([cent.lat, cent.lng], 15)
                     setTimeout(() => openModal(cent), 900)
                   } else {
-                    openModal({ NOMBRE: buscarNombre })
+                    // No en caché — buscar coordenadas UTM en boletín
+                    fetch(`/api/boletin/buscar?q=${encodeURIComponent(buscarNombre)}`)
+                      .then(r => r.json())
+                      .then((results: any[]) => {
+                        const found = results.find((r: any) => r.lat && r.lng)
+                        if (found) {
+                          map.flyTo([found.lat, found.lng], 15)
+                          setTimeout(() => openModal({
+                            NOMBRE:         found.nombre,
+                            TITULAR_NOMBRE: found.titular,
+                            _source:        'boletin',
+                            CATEGORIA:      found.categoria,
+                          }), 900)
+                        } else {
+                          openModal({ NOMBRE: buscarNombre })
+                        }
+                      })
+                      .catch(() => openModal({ NOMBRE: buscarNombre }))
                   }
                 })
                 .catch(() => openModal({ NOMBRE: buscarNombre }))
