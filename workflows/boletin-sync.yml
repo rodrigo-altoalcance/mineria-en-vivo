@@ -2,7 +2,7 @@ name: Boletín Minería — Sync Diario
 
 on:
   schedule:
-    - cron: '30 13 * * 1-5'  # 10:30 CLT (13:30 UTC), lunes–viernes
+    - cron: '30 13 * * 1-5'  # 11:00 CLT (15:00 UTC), lunes–viernes
   workflow_dispatch:           # trigger manual desde GitHub Actions UI
 
 jobs:
