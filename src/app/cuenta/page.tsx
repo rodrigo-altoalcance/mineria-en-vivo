@@ -48,6 +48,18 @@ export default async function CuentaPage() {
             </span>
           </div>
 
+          {profile?.role === 'admin' && (
+            <div className="flex justify-between items-center py-3"
+              style={{ borderBottom: '1px solid var(--border-dim)' }}>
+              <span className="text-xs font-semibold uppercase tracking-wide"
+                style={{ color: 'var(--text-muted)' }}>Rol</span>
+              <span className="text-xs font-bold px-2 py-0.5 rounded"
+                style={{ background: 'rgba(217,119,6,0.12)', color: 'var(--warn)' }}>
+                Administrador
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-between items-center py-3">
             <span className="text-xs font-semibold uppercase tracking-wide"
               style={{ color: 'var(--text-muted)' }}>Miembro desde</span>
@@ -57,7 +69,7 @@ export default async function CuentaPage() {
           </div>
         </div>
 
-        {profile?.plan === 'free' && (
+        {profile?.plan === 'free' && profile?.role !== 'admin' && (
           <div className="mt-6 rounded-xl p-5 flex items-center justify-between gap-4"
             style={{ background: 'var(--accent-dim)', border: '1px solid rgba(100,138,255,0.25)' }}>
             <div>
