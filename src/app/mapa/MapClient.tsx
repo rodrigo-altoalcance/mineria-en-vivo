@@ -226,31 +226,52 @@ export default function MapClient({
     return () => clearTimeout(t)
   }, [geoQuery])
 
-  // Concession search with debounce
+  // Concession search with debounce (SERNAGEOMIN + boletín)
   useEffect(() => {
     if (concQuery.length < 3) { setConcResults([]); return }
     const t = setTimeout(async () => {
       setConcLoading(true)
       try {
-        const where = encodeURIComponent(`UPPER(NOMBRE) LIKE UPPER('%${concQuery}%') OR UPPER(TITULAR_NOMBRE) LIKE UPPER('%${concQuery}%')`)
-        const url = `https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${where}&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=20`
-        const res  = await fetch(url)
-        const data = await res.json()
+        const [sernRes, bolRes] = await Promise.allSettled([
+          fetch(`https://arcgisawa.sernageomin.cl/server/rest/services/VIEW_WGS84/FeatureServer/2/query?where=${encodeURIComponent(`UPPER(NOMBRE) LIKE UPPER('%${concQuery}%') OR UPPER(TITULAR_NOMBRE) LIKE UPPER('%${concQuery}%')`)}&outFields=*&returnGeometry=true&f=geojson&resultRecordCount=20`).then(r => r.json()),
+          fetch(`/api/boletin/buscar?q=${encodeURIComponent(concQuery)}`).then(r => r.json()),
+        ])
+
         const results: ConcResult[] = []
-        for (const f of (data.features ?? [])) {
-          const p = f.properties
-          if (p.SITUACION_CONCESION === 'ELIMINADA') continue
-          const centroid = getCentroid(f.geometry)
-          if (!centroid) continue
-          results.push({
-            nombre:    p.NOMBRE || 'Sin nombre',
-            rol:       `${p.NUMERO_ROL}${p.DV_ROL ? '-' + p.DV_ROL : ''}`,
-            tipo:      p.TIPO_CONCESION || '',
-            situacion: p.SITUACION_CONCESION || '',
-            titular:   p.TITULAR_NOMBRE || '',
-            centroid,  props: p,
-          })
+
+        if (sernRes.status === 'fulfilled') {
+          for (const f of (sernRes.value.features ?? [])) {
+            const p = f.properties
+            if (p.SITUACION_CONCESION === 'ELIMINADA') continue
+            const centroid = getCentroid(f.geometry)
+            if (!centroid) continue
+            results.push({
+              nombre:    p.NOMBRE || 'Sin nombre',
+              rol:       `${p.NUMERO_ROL}${p.DV_ROL ? '-' + p.DV_ROL : ''}`,
+              tipo:      p.TIPO_CONCESION || '',
+              situacion: p.SITUACION_CONCESION || '',
+              titular:   p.TITULAR_NOMBRE || '',
+              centroid,  props: p,
+            })
+          }
         }
+
+        if (bolRes.status === 'fulfilled') {
+          const sernNombres = new Set(results.map(r => r.nombre.toUpperCase()))
+          for (const b of (bolRes.value ?? [])) {
+            if (sernNombres.has((b.nombre || '').toUpperCase())) continue
+            results.push({
+              nombre:    b.nombre || 'Sin nombre',
+              rol:       '—',
+              tipo:      b.categoria?.includes('PERTENENCIA') ? 'EXPLOTACION' : 'EXPLORACION',
+              situacion: 'EN TRAMITE',
+              titular:   b.titular || '',
+              centroid:  [b.lat, b.lng],
+              props:     { NOMBRE: b.nombre, TITULAR_NOMBRE: b.titular, _source: 'boletin', CATEGORIA: b.categoria },
+            })
+          }
+        }
+
         setConcResults(results)
       } catch { setConcResults([]) }
       setConcLoading(false)
@@ -929,27 +950,33 @@ export default function MapClient({
                   {!concLoading && concQuery.length >= 3 && concResults.length === 0 && (
                     <div style={{ padding: 12, fontSize: 11, color: '#404870', textAlign: 'center' }}>Sin resultados</div>
                   )}
-                  {concResults.map((r, i) => (
-                    <button key={i}
-                      onClick={() => {
-                        mapActionsRef.current?.flyTo(r.centroid[0], r.centroid[1], 15)
-                        setTimeout(() => mapActionsRef.current?.openModal(r.props), 900)
-                      }}
-                      style={{ width: '100%', display: 'block', textAlign: 'left', background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer', padding: '8px 10px', marginBottom: 2 }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#141928')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                    >
-                      <div style={{ fontSize: 11, fontWeight: 600, color: '#dde2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.nombre}</div>
-                      <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center' }}>
-                        <span style={{ fontSize: 9, color: '#7a82a8' }}>{r.rol}</span>
-                        <span style={{ fontSize: 9, color: sitColor(r.situacion) }}>●</span>
-                        <span style={{ fontSize: 9, color: '#7a82a8' }}>{tipoLabel(r.tipo)}</span>
-                      </div>
-                      {r.titular && (
-                        <div style={{ fontSize: 10, color: '#404870', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.titular}</div>
-                      )}
-                    </button>
-                  ))}
+                  {concResults.map((r, i) => {
+                    const isBoletín = r.props?._source === 'boletin'
+                    return (
+                      <button key={i}
+                        onClick={() => {
+                          mapActionsRef.current?.flyTo(r.centroid[0], r.centroid[1], 15)
+                          setTimeout(() => mapActionsRef.current?.openModal(r.props), 900)
+                        }}
+                        style={{ width: '100%', display: 'block', textAlign: 'left', background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer', padding: '8px 10px', marginBottom: 2 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#141928')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 600, color: '#dde2f5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.nombre}</div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center' }}>
+                          {isBoletín
+                            ? <span style={{ fontSize: 8, color: '#FFD600', border: '1px solid #FFD600', borderRadius: 3, padding: '0 4px' }}>BOLETÍN</span>
+                            : <span style={{ fontSize: 9, color: '#7a82a8' }}>{r.rol}</span>
+                          }
+                          <span style={{ fontSize: 9, color: sitColor(r.situacion) }}>●</span>
+                          <span style={{ fontSize: 9, color: '#7a82a8' }}>{tipoLabel(r.tipo)}</span>
+                        </div>
+                        {r.titular && (
+                          <div style={{ fontSize: 10, color: '#404870', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.titular}</div>
+                        )}
+                      </button>
+                    )
+                  })}
                   {concQuery.length < 3 && (
                     <div style={{ padding: '24px 12px', fontSize: 11, color: '#404870', textAlign: 'center', lineHeight: 1.8 }}>
                       Busca por nombre,<br/>ROL o titular<br/>(búsqueda nacional)
