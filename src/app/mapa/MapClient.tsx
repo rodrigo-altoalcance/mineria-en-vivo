@@ -675,7 +675,10 @@ export default function MapClient({
             const feat = data.features?.find((f: any) => f.properties?.SITUACION_CONCESION !== 'ELIMINADA') ?? data.features?.[0]
             if (feat) {
               const centroid = getCentroid(feat.geometry)
-              if (centroid) map.flyTo([centroid[0], centroid[1]], 15)
+              if (centroid) {
+                skipCache = true  // forzar carga desde SERNAGEOMIN para que aparezca el polígono
+                map.flyTo([centroid[0], centroid[1]], 15)
+              }
               setTimeout(() => openModal(feat.properties), centroid ? 900 : 0)
             } else {
               // No en SERNAGEOMIN — buscar centroide en caché Supabase
@@ -716,6 +719,7 @@ export default function MapClient({
       let concesionesLayer: L.GeoJSON | null = null
       let debounce: ReturnType<typeof setTimeout> | null = null
       let abortCtrl: AbortController | null = null
+      let skipCache = false   // se activa cuando buscarNombre navega a SERNAGEOMIN
       const statusEl = document.getElementById('map-status')!
 
       function renderLayer(data: any, zoom?: number) {
@@ -785,19 +789,25 @@ export default function MapClient({
         const limit = zoom >= 10 ? 2000 : zoom >= 9 ? 800 : 300
 
         try {
-          // Intentar primero desde nuestra caché en Supabase
-          const res  = await fetch(`/api/concesiones?bbox=${bbox}`, { signal })
-          const data = await res.json()
+          // Si venimos de una búsqueda por nombre, saltarse la caché para
+          // garantizar que el polígono buscado aparezca aunque no esté cacheado
+          const useCache = !skipCache
+          skipCache = false
 
-          if (data.source === 'supabase' || data.source === 'empty') {
-            if (data.source === 'empty') {
-              statusEl.textContent = 'Consultando SERNAGEOMIN…'
-              const fallback = await loadFromSernageomin(bbox, signal, limit)
-              renderLayer(fallback, zoom)
-            } else {
+          let usedCache = false
+          if (useCache) {
+            const res  = await fetch(`/api/concesiones?bbox=${bbox}`, { signal })
+            const data = await res.json()
+            if (data.source === 'supabase') {
               renderLayer(data, zoom)
+              usedCache = true
+            } else if (data.source === 'empty') {
+              // no hay nada en la caché, SERNAGEOMIN puede tenerlo
             }
-          } else {
+          }
+
+          if (!usedCache) {
+            statusEl.textContent = 'Consultando SERNAGEOMIN…'
             const fallback = await loadFromSernageomin(bbox, signal, limit)
             renderLayer(fallback, zoom)
           }
