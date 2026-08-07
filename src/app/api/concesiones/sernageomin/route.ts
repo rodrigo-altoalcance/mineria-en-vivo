@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 55
@@ -11,6 +12,12 @@ const SERNAGEOMIN_BASE =
 const CACHE_BATCH_LIMIT = 150
 
 export async function GET(req: NextRequest) {
+  // Requiere sesión de usuario autenticado — /mapa ya exige login, esto solo
+  // cierra el endpoint a quien le pegue directo sin cookie de sesión.
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const bbox  = req.nextUrl.searchParams.get('bbox')
   const limit = Math.min(Number(req.nextUrl.searchParams.get('limit') ?? 2000), 2000)
 

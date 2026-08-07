@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import https from 'https'
+import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,6 +60,12 @@ function parsePayments(html: string): Pago[] {
 }
 
 export async function GET(req: NextRequest) {
+  // Requiere sesión de usuario autenticado — /mapa ya exige login, esto solo
+  // cierra el endpoint a quien le pegue directo sin cookie de sesión.
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const rolParam = req.nextUrl.searchParams.get('rol')
   const tipo     = req.nextUrl.searchParams.get('tipo') || 'EXPLOTACION'
   if (!rolParam) return NextResponse.json(null)
