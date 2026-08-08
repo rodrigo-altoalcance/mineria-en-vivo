@@ -25,7 +25,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     type: 'recovery',
     email: profile.email,
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://mineria-en-vivo.vercel.app'}/mapa`,
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/mapa`,
     },
   })
 

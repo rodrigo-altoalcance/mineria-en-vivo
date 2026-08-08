@@ -2,7 +2,7 @@ name: Boletín Minería — Sync Diario
 
 on:
   schedule:
-        - cron: '0 9 * * *'  # 06:00 CLT (09:00 UTC)
+        - cron: '0 15 * * *'  # 11:00 CLT (15:00 UTC)
   workflow_dispatch:
 
 jobs:
