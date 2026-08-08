@@ -56,8 +56,9 @@ export default function RegisterPage() {
         data: { full_name: fullName },
         // Siempre apunta al dominio canónico de producción, nunca al origin
         // del navegador (evita links de confirmación a localhost cuando el
-        // registro se dispara desde un entorno de desarrollo).
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/mapa`,
+        // registro se dispara desde un entorno de desarrollo). Pasa por
+        // /auth/callback para intercambiar el `code` PKCE por una sesión.
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/auth/callback?next=/mapa`,
       },
     })
 

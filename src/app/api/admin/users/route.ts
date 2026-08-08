@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
     data: { full_name: full_name ?? '' },
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/mapa`,
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/auth/callback?next=/mapa`,
   })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
