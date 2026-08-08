@@ -54,7 +54,10 @@ export default function RegisterPage() {
       password,
       options: {
         data: { full_name: fullName },
-        emailRedirectTo: `${window.location.origin}/mapa`,
+        // Siempre apunta al dominio canónico de producción, nunca al origin
+        // del navegador (evita links de confirmación a localhost cuando el
+        // registro se dispara desde un entorno de desarrollo).
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://mineria-en-vivo.vercel.app'}/mapa`,
       },
     })
 
