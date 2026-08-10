@@ -67,11 +67,10 @@ export function resolverRango(
 ): RangoResuelto {
   const hastaDefault = fechaMasReciente ?? todayISO()
 
-  const defaultDesde = (() => {
-    const d = new Date(hastaDefault + 'T12:00:00')
-    d.setDate(d.getDate() - 6)
-    return d.toISOString().split('T')[0]
-  })()
+  // Default de primera carga: un solo día (hoy, o el más reciente con datos
+  // si hoy no tiene publicaciones — fin de semana/feriado). El usuario amplía
+  // el rango manualmente desde ahí; no se preselecciona una ventana de días.
+  const defaultDesde = hastaDefault
 
   if (!esFechaISO(desdeParam) || !esFechaISO(hastaParam)) {
     return { desde: defaultDesde, hasta: hastaDefault, corregido: false }
