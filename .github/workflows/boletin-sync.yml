@@ -4,6 +4,11 @@ on:
   schedule:
         - cron: '0 15 * * *'  # 11:00 CLT (15:00 UTC)
   workflow_dispatch:
+    inputs:
+      fecha:
+        description: 'Fecha a sincronizar (YYYY-MM-DD). Vacío = hoy/última edición disponible.'
+        required: false
+        type: string
 
 jobs:
   sync:
@@ -11,8 +16,12 @@ jobs:
     environment: Production
     steps:
       - name: Trigger sync endpoint
+        env:
+          FECHA: ${{ inputs.fecha }}
         run: |
           set -o pipefail
-          curl -sf -X GET \
-            "${{ secrets.NEXT_PUBLIC_APP_URL }}/api/boletin/sync?secret=${{ secrets.BOLETIN_SYNC_SECRET }}" \
-            | jq .
+          URL="${{ secrets.NEXT_PUBLIC_APP_URL }}/api/boletin/sync?secret=${{ secrets.BOLETIN_SYNC_SECRET }}"
+          if [ -n "$FECHA" ]; then
+            URL="${URL}&fecha=${FECHA}"
+          fi
+          curl -sf -X GET "$URL" | jq .
