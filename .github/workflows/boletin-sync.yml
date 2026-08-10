@@ -24,4 +24,9 @@ jobs:
           if [ -n "$FECHA" ]; then
             URL="${URL}&fecha=${FECHA}"
           fi
-          curl -s -w '\nHTTP_STATUS:%{http_code}\n' -X GET "$URL"
+          HTTP_CODE=$(curl -s -o /tmp/resp.json -w '%{http_code}' -X GET "$URL")
+          jq . /tmp/resp.json
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Sync falló con HTTP $HTTP_CODE"
+            exit 1
+          fi
