@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { BoletinPublicacion } from '@/types/database'
 import AlertDialog from '@/components/ui/AlertDialog'
-import { excedeRangoMaximo, maxHastaPara, RANGO_MAX_MESES } from '@/lib/dateRange'
+import { excedeRangoMaximo, minDesdePara, maxHastaPara, RANGO_MAX_MESES } from '@/lib/dateRange'
 
 interface Props {
   publicaciones: BoletinPublicacion[]
@@ -23,22 +23,21 @@ const CATEGORIAS_ORDEN = [
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
-// ── Mini-calendario único (un solo popover para "desde" y "hasta") ─────────────
-// El significado de cada clic (fija "desde" o fija "hasta") lo decide el
-// llamador (SelectorFecha) vía `onChange`; este componente solo pinta el mes
-// y resalta el rango [desde, hasta] ya elegido. `maxDate` deshabilita
-// visualmente las celdas fuera del tope de 3 meses una vez fijado "desde" —
-// refuerzo, no único mecanismo (el cálculo real vive en dateRange.ts).
+// ── Mini-calendario (usado dos veces: "desde" y "hasta") ───────────────────────
+// `minDate`/`maxDate` deshabilitan visualmente las celdas fuera del rango
+// válido según el otro extremo ya elegido. El popup de advertencia (aviso de
+// refuerzo, no único mecanismo) lo dispara el handler en BoletinClient si de
+// todas formas llega un onChange fuera de rango.
 
-function Calendario({ desde, hasta, maxDate, onChange }: {
-  desde: string
-  hasta: string
+function Calendario({ selected, minDate, maxDate, onChange }: {
+  selected: string
+  minDate?: string
   maxDate?: string
   onChange: (d: string) => void
 }) {
   const today = new Date().toISOString().split('T')[0]
 
-  const init = desde ? new Date(desde + 'T12:00:00') : new Date()
+  const init = selected ? new Date(selected + 'T12:00:00') : new Date()
   const [viewYear,  setViewYear]  = useState(init.getFullYear())
   const [viewMonth, setViewMonth] = useState(init.getMonth())
 
@@ -98,10 +97,9 @@ function Calendario({ desde, hasta, maxDate, onChange }: {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {cells.map((cell, i) => {
           if (!cell) return <div key={`e${i}`} />
-          const disabled   = !!maxDate && cell.iso > maxDate
-          const esExtremo  = cell.iso === desde || cell.iso === hasta
-          const enRango    = !!desde && !!hasta && cell.iso > desde && cell.iso < hasta
-          const isToday    = cell.iso === today
+          const disabled = (!!minDate && cell.iso < minDate) || (!!maxDate && cell.iso > maxDate)
+          const isSel    = cell.iso === selected
+          const isToday  = cell.iso === today
 
           return (
             <div key={cell.iso}
@@ -110,12 +108,12 @@ function Calendario({ desde, hasta, maxDate, onChange }: {
                 textAlign: 'center',
                 padding: '5px 0',
                 fontSize: 11,
-                borderRadius: esExtremo ? 5 : 0,
+                borderRadius: 5,
                 cursor: disabled ? 'not-allowed' : 'pointer',
-                background: esExtremo ? 'var(--accent)' : enRango ? 'rgba(100,138,255,0.18)' : 'transparent',
-                color: esExtremo ? '#fff' : disabled ? 'var(--text-faint)' : 'var(--text)',
-                fontWeight: esExtremo ? 700 : 400,
-                border: isToday && !esExtremo ? '1px solid rgba(100,138,255,0.5)' : '1px solid transparent',
+                background: isSel ? 'var(--accent)' : 'transparent',
+                color: isSel ? '#fff' : disabled ? 'var(--text-faint)' : 'var(--text)',
+                fontWeight: isSel ? 700 : 400,
+                border: isToday && !isSel ? '1px solid rgba(100,138,255,0.5)' : '1px solid transparent',
                 transition: 'background .12s',
               }}>
               {cell.day}
@@ -133,64 +131,58 @@ const navBtn: React.CSSProperties = {
   fontSize: 18, padding: '0 6px', lineHeight: 1,
 }
 
-// ── Selector de fecha (un solo calendario para "desde" y "hasta") ──────────────
-// Selección en dos clics dentro del mismo popover: el primer clic fija
-// "desde" (y arranca un rango de un solo día); el segundo clic fija "hasta"
-// — salvo que el día clickeado sea anterior a "desde", en cuyo caso se
-// interpreta como el inicio de una nueva selección (se reemplaza "desde").
-// El tope de 3 meses se hace cumplir deshabilitando celdas (`maxDate` sobre
-// `Calendario`) mientras se está esperando el segundo clic — por construcción
-// no se puede clickear un "hasta" inválido, así que el rechazo silencioso que
-// prohíbe la tarea no aplica aquí (no hay nada inválido que corregir).
+// ── Selector de rango (Desde / Hasta) ───────────────────────────────────────────
 
-function SelectorFecha({ desde, hasta, onRangoChange }: {
+function SelectorRango({ desde, hasta, onDesdeChange, onHastaChange }: {
   desde: string
   hasta: string
-  onRangoChange: (desde: string, hasta: string) => void
+  onDesdeChange: (d: string) => void
+  onHastaChange: (d: string) => void
 }) {
-  const [abierto, setAbierto] = useState(false)
-  const [paso, setPaso] = useState<'desde' | 'hasta'>('desde')
+  const [abierto, setAbierto] = useState<'desde' | 'hasta' | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(null)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  function alternar() {
-    setPaso('desde') // cada apertura arranca una selección nueva
-    setAbierto(a => !a)
-  }
-
-  function onDiaClick(iso: string) {
-    if (paso === 'desde' || iso < desde) {
-      onRangoChange(iso, iso) // primer clic (o reinicio): rango de un día
-      setPaso('hasta')
-      return
-    }
-    onRangoChange(desde, iso) // segundo clic: cierra el rango
-    setPaso('desde')
-    setAbierto(false)
-  }
-
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button onClick={alternar} style={dateBtnStyle}>
-        📅 {desde === hasta ? formatFecha(desde) : `${formatFecha(desde)} – ${formatFecha(hasta)}`}
-      </button>
-      {abierto && (
-        <div style={popoverStyle}>
-          <Calendario
-            desde={desde}
-            hasta={hasta}
-            maxDate={paso === 'hasta' ? maxHastaPara(desde) : undefined}
-            onChange={onDiaClick}
-          />
-        </div>
-      )}
+    <div ref={ref} style={{ display: 'flex', gap: 6 }}>
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => setAbierto(a => a === 'desde' ? null : 'desde')} style={dateBtnStyle}>
+          <span style={{ color: 'var(--text-muted)' }}>Desde</span> {formatFecha(desde)}
+        </button>
+        {abierto === 'desde' && (
+          <div style={popoverStyle}>
+            <Calendario
+              selected={desde}
+              maxDate={hasta || undefined}
+              minDate={hasta ? minDesdePara(hasta) : undefined}
+              onChange={d => { onDesdeChange(d); setAbierto(null) }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => setAbierto(a => a === 'hasta' ? null : 'hasta')} style={dateBtnStyle}>
+          <span style={{ color: 'var(--text-muted)' }}>Hasta</span> {formatFecha(hasta)}
+        </button>
+        {abierto === 'hasta' && (
+          <div style={popoverStyle}>
+            <Calendario
+              selected={hasta}
+              minDate={desde || undefined}
+              maxDate={desde ? maxHastaPara(desde) : undefined}
+              onChange={d => { onHastaChange(d); setAbierto(null) }}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -236,16 +228,20 @@ export default function BoletinClient({ publicaciones, desde, hasta }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desdeSel, hastaSel])
 
-  // Único punto de entrada del picker: los dos extremos se fijan juntos
-  // (ver SelectorFecha), así que se validan juntos — defensa en profundidad,
-  // el `maxDate` del Calendario ya impide clickear un "hasta" inválido.
-  function handleRangoChange(d: string, h: string) {
-    if (excedeRangoMaximo(d, h)) {
-      setAdvertencia(`El rango máximo a consultar es de ${RANGO_MAX_MESES} meses.`)
+  function handleDesdeChange(d: string) {
+    if (excedeRangoMaximo(d, hastaSel)) {
+      setAdvertencia(`El rango máximo a consultar es de ${RANGO_MAX_MESES} meses. Ajusta la fecha "hasta" o elige una fecha "desde" más reciente.`)
       return
     }
     setDesdeSel(d)
-    setHastaSel(h)
+  }
+
+  function handleHastaChange(d: string) {
+    if (excedeRangoMaximo(desdeSel, d)) {
+      setAdvertencia(`El rango máximo a consultar es de ${RANGO_MAX_MESES} meses. Ajusta la fecha "desde" o elige una fecha "hasta" más cercana.`)
+      return
+    }
+    setHastaSel(d)
   }
 
   const [tab,          setTab]          = useState('todas')
@@ -311,10 +307,11 @@ export default function BoletinClient({ publicaciones, desde, hasta }: Props) {
 
         {/* Filtros */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <SelectorFecha
+          <SelectorRango
             desde={desdeSel}
             hasta={hastaSel}
-            onRangoChange={handleRangoChange}
+            onDesdeChange={handleDesdeChange}
+            onHastaChange={handleHastaChange}
           />
 
           <select value={regionFiltro} onChange={e => setRegionFiltro(e.target.value)}
