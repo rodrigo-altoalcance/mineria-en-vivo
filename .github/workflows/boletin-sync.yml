@@ -24,4 +24,4 @@ jobs:
           if [ -n "$FECHA" ]; then
             URL="${URL}&fecha=${FECHA}"
           fi
-          curl -sf -X GET "$URL" | jq .
+          curl -s -w '\nHTTP_STATUS:%{http_code}\n' -X GET "$URL"
