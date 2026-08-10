@@ -8,9 +8,11 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    environment: Production
     steps:
       - name: Trigger sync endpoint
         run: |
+          set -o pipefail
           curl -sf -X GET \
             "${{ secrets.NEXT_PUBLIC_APP_URL }}/api/boletin/sync?secret=${{ secrets.BOLETIN_SYNC_SECRET }}" \
             | jq .
