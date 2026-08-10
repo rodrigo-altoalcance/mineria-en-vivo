@@ -13,3 +13,9 @@ El proyecto usa `@supabase/ssr` (`createBrowserClient` / `createServerClient`), 
 - Se eliminó la lista `fechas` (2000 filas) que alimentaba los "puntitos" de días con publicaciones en el mini-calendario — mantenerla habría requerido el mismo antipatrón de buffer precargado. El calendario en modo rango ya no muestra esa decoración; si se quiere recuperar, debe ser vía una query acotada al mes visible, no un fetch global.
 - Nuevo componente reutilizable: `src/components/ui/AlertDialog.tsx` (modal de advertencia genérico, mismo chrome que `InviteModal`). Reutilizar antes de crear otro modal similar.
 - Búsqueda por nombre/titular y filtros de categoría/región siguen siendo client-side, pero ahora aplican sobre el resultado ya acotado por rango (antes era sobre el día único).
+
+### Default de primera carga: un solo día, no una ventana de 7 días
+
+`resolverRango()` (`src/lib/dateRange.ts`) ya calculaba el `hasta` por defecto como la fecha más reciente con publicaciones (`page.tsx` la obtiene con una query dedicada `order('fecha', desc).limit(1)`, independiente de la lista `fechas` eliminada arriba) — ese fallback "hoy, o el día más reciente con datos si hoy no hay (fin de semana/feriado)" **ya existía y no se perdió en el refactor de rango**, así que no se reescribió. Lo único que cambió: `defaultDesde` calculaba `hastaDefault - 6 días` (ventana de 7 días); ahora es `defaultDesde = hastaDefault`, o sea el rango inicial al entrar a `/boletin` sin `desde`/`hasta` en la URL es un solo día. El usuario amplía el rango manualmente desde ahí (hasta el máximo de 3 meses, sin cambios). No se tocó el cap de 3 meses ni la query server-side por rango.
+
+Nota: el indicador visual ("puntito") de "este día tiene publicaciones" en el mini-calendario **no existe actualmente** en `Calendario` (`BoletinClient.tsx`) — se eliminó junto con la lista `fechas` en el refactor anterior y no se ha reintroducido.
