@@ -54,6 +54,94 @@ function sectionHTML(title: string, rows: string, id?: string) {
     ${rows}</div>`
 }
 
+// ─── Cronología del trámite (etapa Manifestación → Mensura → Sentencia → Inscripción) ─
+
+type CronologiaDoc = Record<string, string | null>
+
+const ETAPAS = [
+  { id: 'manifestacion', label: 'Manifestación', dateKeys: ['manifestacion_publicacion', 'manifestacion_inscripcion', 'manifestacion_orden', 'manifestacion_presentac'] },
+  { id: 'mensura',       label: 'Mensura',        dateKeys: ['mensura_publicacion', 'mensura_solicitud'] },
+  { id: 'sentencia',     label: 'Sentencia',      dateKeys: ['sentencia_fecha'] },
+  { id: 'inscripcion',   label: 'Inscripción CBR', dateKeys: [] as string[] },
+] as const
+
+// Combina el JSON `doc` (cronología) de TODAS las publicaciones del trámite —
+// cada etapa (manifestación/mensura/sentencia) suele llegar en un boletín distinto,
+// así que una sola publicación casi nunca trae la cronología completa.
+function mergeCronologia(pubs: any[]): CronologiaDoc {
+  const cron: CronologiaDoc = {}
+  for (const p of [...pubs].reverse()) { // más antigua → más nueva, para que la más reciente gane si hay choque
+    let d: Record<string, any> = {}
+    try { d = p.doc ? JSON.parse(p.doc) : {} } catch { /* doc corrupto o no-JSON, se ignora */ }
+    for (const k of Object.keys(d)) {
+      if (d[k] != null && String(d[k]).trim() !== '') cron[k] = d[k]
+    }
+  }
+  return cron
+}
+
+// Etapa alcanzada = la última con evidencia, combinando categorías del boletín
+// (más confiable, siempre presente) con las fechas de la cronología (más detalle).
+function etapaActualIdx(cron: CronologiaDoc, cats: string[], latest: any): number {
+  const has = (needle: string) => cats.some(c => c.includes(needle))
+  const reached = [
+    has('PEDIMENTO') || has('MANIFESTAC') || Boolean(cron.manifestacion_presentac || cron.manifestacion_orden || cron.manifestacion_inscripcion || cron.manifestacion_publicacion),
+    has('MENSURA')   || Boolean(cron.mensura_solicitud || cron.mensura_publicacion),
+    has('SENTENCIA') || Boolean(cron.sentencia_fecha),
+    has('INSCRIPCION') || has('INSCRIPCIÓN') || Boolean(latest?.inscripcion_fs || latest?.inscripcion_date),
+  ]
+  let idx = -1
+  reached.forEach((r, i) => { if (r) idx = i })
+  return idx
+}
+
+function renderEtapaStepper(cron: CronologiaDoc, cats: string[], latest: any): string {
+  const currentIdx = etapaActualIdx(cron, cats, latest)
+  const nodes = ETAPAS.map((etapa, i) => {
+    const fecha = etapa.dateKeys.map(k => cron[k]).find(Boolean)
+      ?? (etapa.id === 'inscripcion' ? (latest?.inscripcion_date ?? null) : null)
+    const done    = i < currentIdx
+    const current = i === currentIdx
+    const color   = done ? '#00E676' : current ? '#648aff' : '#404870'
+    const weight  = current ? 700 : 500
+    return `<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0">
+      <div style="width:10px;height:10px;border-radius:50%;background:${color};${current ? 'box-shadow:0 0 0 4px rgba(100,138,255,.2)' : ''};margin-bottom:6px"></div>
+      <div style="font-size:10px;font-weight:${weight};color:${color};text-align:center;line-height:1.3">${etapa.label}</div>
+      <div style="font-size:9px;color:#7a82a8;margin-top:2px">${fecha ?? '—'}</div>
+    </div>`
+  })
+  const lineColor = currentIdx < 0 ? '#2e3247' : '#3a4166'
+  return `<div style="margin-bottom:14px">
+    <div style="display:flex;align-items:flex-start;position:relative">
+      <div style="position:absolute;top:5px;left:0;right:0;height:1px;background:${lineColor};z-index:0;margin:0 5%"></div>
+      <div style="display:flex;width:100%;position:relative;z-index:1">${nodes.join('')}</div>
+    </div>
+  </div>`
+}
+
+const CRONOLOGIA_LABELS: [string, string][] = [
+  ['manifestacion_presentac',   'Manifestación · Presentación'],
+  ['manifestacion_orden',       'Manifestación · Orden'],
+  ['manifestacion_inscripcion', 'Manifestación · Inscripción'],
+  ['manifestacion_publicacion', 'Manifestación · Publicación'],
+  ['mensura_solicitud',         'Mensura · Solicitud'],
+  ['mensura_publicacion',       'Mensura · Publicación'],
+  ['sentencia_fecha',           'Sentencia'],
+  ['plazo_mensura',             'Plazo mensura'],
+  ['plazo_vigencia',            'Plazo vigencia'],
+]
+
+// Se muestran las 9 fechas siempre — si el trámite todavía no llegó a esa
+// etapa, la fila queda vacía ("Sin dato", vía fieldRow) en vez de omitirse u
+// inventar un valor.
+function renderCronologiaGrid(cron: CronologiaDoc): string {
+  const rows = CRONOLOGIA_LABELS.map(([key, label]) => fieldRow(label, cron[key])).join('')
+  return `<div style="margin-top:10px;margin-bottom:4px">
+    <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Cronología</div>
+    ${rows}
+  </div>`
+}
+
 // ─── Geometry centroid ────────────────────────────────────────────────────────
 
 function getCentroid(geometry: any): [number, number] | null {
@@ -474,6 +562,11 @@ export default function MapClient({
                 ? `<a href="${latest.url_pdf}" target="_blank" rel="noopener" style="color:#648aff;font-size:11px;text-decoration:none">Ver PDF →</a>`
                 : ''
 
+              // Categorías de TODAS las publicaciones del trámite (no solo la última) —
+              // se usan tanto para la etapa/stepper como para inferir situación más abajo.
+              const cats = pubs.map((p: any) => (p.categoria || '').toUpperCase())
+              const cron = mergeCronologia(pubs)
+
               // Show all publications as a cronología timeline
               const catLabel = (cat: string) => {
                 if (cat.includes('MANIFESTAC')) return 'Manifestación'
@@ -494,11 +587,13 @@ export default function MapClient({
 
               el.innerHTML = `
                 <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial ${boletinLink}</div>
+                ${renderEtapaStepper(cron, cats, latest)}
                 ${latest.juzgado ? fieldRow('Juzgado', latest.juzgado) : ''}
                 ${latest.causa_rol ? fieldRow('Causa ROL', latest.causa_rol) : ''}
                 ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}
                 ${latest.inscripcion_fs ? fieldRow('FS / N°', latest.inscripcion_fs) : ''}
                 ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
+                ${renderCronologiaGrid(cron)}
                 <div style="margin-top:8px">
                   <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Publicaciones</div>
                   ${allRows}
@@ -513,7 +608,6 @@ export default function MapClient({
                 //   SENTENCIA                 → fallo judicial (puede constituir)
                 //   INSCRIPCION               → inscrita en CBR (constituida)
                 //   PERTENENCIA               → explotación (puede estar en trámite o constituida)
-                const cats = pubs.map((p: any) => (p.categoria || '').toUpperCase())
                 const hasInscripcion  = cats.some((c: string) => c.includes('INSCRIPCION') || c.includes('INSCRIPCIÓN'))
                 const hasSentencia    = cats.some((c: string) => c.includes('SENTENCIA'))
                 const hasMensura      = cats.some((c: string) => c.includes('MENSURA'))
