@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Profile, FavoritoRow } from '@/types/database'
 import AppShell from '@/components/layout/AppShell'
 import { addFavorito, removeFavorito } from './favorites'
-import { ETAPAS, mergeCronologia, etapaActualIdx, type CronologiaDoc } from '@/lib/etapaTramite'
+import { ETAPAS, mergeCronologiaConFuente, flattenCron, etapaActualIdx, type CronologiaConFuente } from '@/lib/etapaTramite'
 
 // ─── Color mapping (matches SERNAGEOMIN viewer) ───────────────────────────────
 
@@ -43,6 +43,17 @@ function fieldRow(label: string, value: string | number | null | undefined) {
     <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">${label}</span>${display}</div>`
 }
 
+// Igual que fieldRow, pero si hay un PDF fuente el valor queda linkeado
+// ("ver el documento donde salió este dato") en vez de texto plano.
+function fieldRowLink(label: string, value: string | number | null | undefined, urlPdf: string | null | undefined) {
+  if (value == null || String(value).trim() === '') return fieldRow(label, null)
+  const display = urlPdf
+    ? `<a href="${urlPdf}" target="_blank" rel="noopener" style="font-size:13px;color:#648aff;text-decoration:none;text-align:right;white-space:nowrap">${value} ↗</a>`
+    : `<span style="font-size:13px;color:#dde2f5;text-align:right">${value}</span>`
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(46,50,71,.5);gap:12px">
+    <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">${label}</span>${display}</div>`
+}
+
 function pendingRow(label: string) {
   return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(217,119,6,.2);gap:12px">
     <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">${label}</span>
@@ -58,19 +69,28 @@ function sectionHTML(title: string, rows: string, id?: string) {
 // ─── Cronología del trámite (etapa Manifestación → Mensura → Sentencia → Inscripción) ─
 // Lógica compartida con el upsert server-side de `expedientes` — ver src/lib/etapaTramite.ts.
 
-function renderEtapaStepper(cron: CronologiaDoc, cats: string[], latest: any): string {
+function renderEtapaStepper(cronFuente: CronologiaConFuente, cats: string[], latest: any): string {
+  const cron = flattenCron(cronFuente)
   const currentIdx = etapaActualIdx(cron, cats, latest)
   const nodes = ETAPAS.map((etapa, i) => {
-    const fecha = etapa.dateKeys.map(k => cron[k]).find(Boolean)
-      ?? (etapa.id === 'inscripcion' ? (latest?.inscripcion_date ?? null) : null)
+    const key = etapa.dateKeys.find(k => cron[k])
+    // Inscripción CBR no tiene dateKeys propios (no viene en el JSON `doc`) —
+    // su fecha/documento salen de latest.inscripcion_date/url_pdf directamente.
+    const fecha  = key ? cron[key] : (etapa.id === 'inscripcion' ? (latest?.inscripcion_date ?? null) : null)
+    const urlPdf = key ? cronFuente[key]?.urlPdf ?? null : (etapa.id === 'inscripcion' ? (latest?.url_pdf ?? null) : null)
     const done    = i < currentIdx
     const current = i === currentIdx
     const color   = done ? '#00E676' : current ? '#648aff' : '#404870'
     const weight  = current ? 700 : 500
+    const fechaHtml = fecha
+      ? (urlPdf
+          ? `<a href="${urlPdf}" target="_blank" rel="noopener" style="font-size:9px;color:#648aff;text-decoration:none">${fecha} ↗</a>`
+          : `<div style="font-size:9px;color:#7a82a8;margin-top:2px">${fecha}</div>`)
+      : `<div style="font-size:9px;color:#7a82a8;margin-top:2px">—</div>`
     return `<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0">
       <div style="width:10px;height:10px;border-radius:50%;background:${color};${current ? 'box-shadow:0 0 0 4px rgba(100,138,255,.2)' : ''};margin-bottom:6px"></div>
       <div style="font-size:10px;font-weight:${weight};color:${color};text-align:center;line-height:1.3">${etapa.label}</div>
-      <div style="font-size:9px;color:#7a82a8;margin-top:2px">${fecha ?? '—'}</div>
+      ${fechaHtml}
     </div>`
   })
   const lineColor = currentIdx < 0 ? '#2e3247' : '#3a4166'
@@ -96,9 +116,13 @@ const CRONOLOGIA_LABELS: [string, string][] = [
 
 // Se muestran las 9 fechas siempre — si el trámite todavía no llegó a esa
 // etapa, la fila queda vacía ("Sin dato", vía fieldRow) en vez de omitirse u
-// inventar un valor.
-function renderCronologiaGrid(cron: CronologiaDoc): string {
-  const rows = CRONOLOGIA_LABELS.map(([key, label]) => fieldRow(label, cron[key])).join('')
+// inventar un valor. Cuando la fecha sí tiene documento fuente, queda
+// linkeada (fieldRowLink) para poder ver el PDF donde se publicó esa fecha.
+function renderCronologiaGrid(cronFuente: CronologiaConFuente): string {
+  const rows = CRONOLOGIA_LABELS.map(([key, label]) => {
+    const entry = cronFuente[key]
+    return entry ? fieldRowLink(label, entry.valor, entry.urlPdf) : fieldRow(label, null)
+  }).join('')
   return `<div style="margin-top:10px;margin-bottom:4px">
     <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Cronología</div>
     ${rows}
@@ -531,7 +555,7 @@ export default function MapClient({
               // Categorías de TODAS las publicaciones del trámite (no solo la última) —
               // se usan tanto para la etapa/stepper como para inferir situación más abajo.
               const cats = pubs.map((p: any) => (p.categoria || '').toUpperCase())
-              const cron = mergeCronologia(pubs)
+              const cronFuente = mergeCronologiaConFuente(pubs)
 
               // Show all publications as a cronología timeline
               const catLabel = (cat: string) => {
@@ -553,13 +577,13 @@ export default function MapClient({
 
               el.innerHTML = `
                 <div style="font-size:10px;font-weight:700;color:#648aff;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Boletín Oficial ${boletinLink}</div>
-                ${renderEtapaStepper(cron, cats, latest)}
-                ${latest.juzgado ? fieldRow('Juzgado', latest.juzgado) : ''}
-                ${latest.causa_rol ? fieldRow('Causa ROL', latest.causa_rol) : ''}
-                ${latest.conservador ? fieldRow('Conservador', latest.conservador) : ''}
-                ${latest.inscripcion_fs ? fieldRow('FS / N°', latest.inscripcion_fs) : ''}
+                ${renderEtapaStepper(cronFuente, cats, latest)}
+                ${latest.juzgado ? fieldRowLink('Juzgado', latest.juzgado, latest.url_pdf) : ''}
+                ${latest.causa_rol ? fieldRowLink('Causa ROL', latest.causa_rol, latest.url_pdf) : ''}
+                ${latest.conservador ? fieldRowLink('Conservador', latest.conservador, latest.url_pdf) : ''}
+                ${latest.inscripcion_fs ? fieldRowLink('FS / N°', latest.inscripcion_fs, latest.url_pdf) : ''}
                 ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
-                ${renderCronologiaGrid(cron)}
+                ${renderCronologiaGrid(cronFuente)}
                 <div style="margin-top:8px">
                   <div style="font-size:10px;font-weight:600;color:#7a82a8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">Publicaciones</div>
                   ${allRows}
