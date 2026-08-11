@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { computeExpedienteKey } from '@/lib/expedienteKey'
 
 const SYNC_SECRET = process.env.BOLETIN_SYNC_SECRET
 const BASE = 'https://www.boletinoficialdemineria.cl'
@@ -201,10 +202,17 @@ async function runSync(targetDate?: string): Promise<{ total: number; inserted: 
     return { total: allEntries.length, inserted: 0, fecha: syncFecha, edicion }
   }
 
-  // 5. Insert only new entries (override fecha to ensure correct date)
+  // 5. Insert only new entries (override fecha to ensure correct date).
+  // expediente_key débil (nombre+titular+region) — el listado del sync nunca trae
+  // causa_rol/juzgado, así que acá nunca se puede calcular la clave fuerte; se
+  // promueve/reconcilia después en parse-pdf/parse-batch cuando el PDF se parsea.
   const { data, error } = await admin
     .from('boletin_publicaciones')
-    .insert(newEntries.map(e => ({ ...e, fecha: syncFecha })))
+    .insert(newEntries.map(e => ({
+      ...e,
+      fecha: syncFecha,
+      expediente_key: computeExpedienteKey({ nombre: e.nombre, titular: e.titular, region: e.region }).key,
+    })))
     .select('id')
 
   if (error) throw new Error(error.message)

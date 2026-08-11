@@ -76,6 +76,7 @@ export interface Database {
           provincia?: string | null
           cve?: string | null
           url_pdf?: string | null
+          expediente_key?: string | null
         }
         Update: Record<string, never>
         Relationships: []
@@ -126,4 +127,6 @@ export type BoletinPublicacion = {
   observaciones: string | null
   pdf_parsed: boolean | null
   created_at: string
+  // Clave de agrupación por expediente — ver src/lib/expedienteKey.ts
+  expediente_key: string | null
 }

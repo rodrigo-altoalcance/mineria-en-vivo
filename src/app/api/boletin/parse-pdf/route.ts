@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { computeExpedienteKey } from '@/lib/expedienteKey'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -176,6 +177,15 @@ export async function GET(req: NextRequest) {
   }
   update.doc = Object.keys(mergedCron).length ? JSON.stringify(mergedCron) : null
 
+  // Promover expediente_key a clave fuerte (rol+juzgado) si el parse los reveló.
+  // Ver docs/plan-etapas-tramite.md sección A — antes de esto la fila cargaba la
+  // clave débil (nombre+titular+region) que le puso boletin/sync.
+  const newKey = computeExpedienteKey({
+    nombre: pub.nombre, titular: pub.titular, region: pub.region,
+    causa_rol: update.causa_rol, juzgado: update.juzgado,
+  })
+  update.expediente_key = newKey.key
+
   const { error: updateErr } = await admin
     .from('boletin_publicaciones')
     .update(update as any)
@@ -183,6 +193,17 @@ export async function GET(req: NextRequest) {
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message, extracted }, { status: 500 })
+  }
+
+  // Reconciliar: otros documentos del mismo trámite (misma clave débil, aún sin
+  // parsear) heredan la clave fuerte recién descubierta — así no quedan huérfanos
+  // agrupados por nombre+titular+region mientras esperan su propio parse.
+  if (newKey.strong && pub.expediente_key && pub.expediente_key !== newKey.key) {
+    await admin
+      .from('boletin_publicaciones')
+      .update({ expediente_key: newKey.key } as any)
+      .eq('expediente_key', pub.expediente_key)
+      .neq('id', pub.id)
   }
 
   return NextResponse.json({

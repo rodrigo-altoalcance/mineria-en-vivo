@@ -39,9 +39,17 @@ Una fila por `expediente_key` con:
 
 ### C. Automatizar lo que hoy es manual (sync diario + drenado de parse)
 
+Confirmado en código (sesión 2026-08-11 cont.): `boletin-sync.yml` **solo** llama a `/api/boletin/sync` — nunca a `parse-pdf`/`parse-batch`. El parseo de PDF hoy es 100% manual (alguien pega la URL a mano o corre un script). Backlog real al momento de escribir esto: **3.308 de 3.643 filas `pdf_parsed=false`** (creció desde el ~2000 estimado el día anterior — sigue sin drenarse mientras el sync diario sigue metiendo filas nuevas).
+
+**Ojo — hay dos parsers, no uno, y comparten un flag:**
+- `scripts/parse-boletin-pdfs.py` — regex + `pdfplumber`, local, gratis, sin LLM. Extrae `causa_rol`/`juzgado`/`comuna`/coordenadas/`inscripcion_fs`, pero **no extrae la cronología** (`manifestacion_publicacion`, `mensura_solicitud`, `sentencia_fecha`, etc. — el JSON que alimenta `ETAPAS`/el stepper en `MapClient.tsx`) y no hace OCR (falla en PDFs escaneados sin capa de texto).
+- `/api/boletin/parse-batch` (+ `parse-pdf` para uno solo) — LLM `claude-haiku-4-5` vía Claude Vision, sí hace OCR, sí extrae la cronología completa. Es el que realmente alimenta el stepper.
+- **Ambos escriben la misma columna `pdf_parsed`** como flag de "listo". Si el script regex corre sobre un lote, esas filas quedan `pdf_parsed=true` y `parse-batch` las salta para siempre (`.eq('pdf_parsed', false)`) — nunca consiguen cronología, y el stepper de esa concesión queda mudo sin aviso. Hoy el daño es mínimo (7 filas así), pero es una trampa para el futuro si se vuelve a correr el script regex "para adelantar" sobre el backlog.
+- **Decisión para este plan**: el drenado automático (punto 2 abajo) usa solo `parse-batch`/OCR. `parse-boletin-pdfs.py` no se integra al flujo automático — si se quiere conservar como parser barato de primera pasada, primero hay que separar su flag a una columna propia (`pdf_parsed_regex`) para que no choque con `parse-batch`.
+
 1. Cron diario existente (`boletin-sync.yml`) se mantiene — trae los pedimentos/manifestaciones/mensuras/sentencias del día.
 2. **Nuevo**: cron diario (o extensión del mismo workflow) que llama a `parse-batch` **en loop** hasta que `processed:0` (o hasta un tope de N iteraciones), en vez de una sola llamada — soluciona el problema de timeout del punto 1.2. Puede ser un job de GitHub Actions con un `while` bash simple (igual patrón que `scripts/backfill-boletin.sh`), o convertir `parse-batch` en un endpoint que se autoinvoque vía `waitUntil`/QStash si se quiere sacarlo de Actions.
-3. Correr ese drenado una vez manualmente contra el backlog actual (~2000 filas) antes de dejarlo en piloto automático — a la cadencia de hoy (~10 docs/llamada, unos segundos por doc) son varias decenas de invocaciones, asumible en un rato.
+3. Correr ese drenado una vez manualmente contra el backlog actual (3.308 filas a la fecha) antes de dejarlo en piloto automático — a la cadencia de hoy (~10-20 docs/llamada, unos segundos por doc) son varias decenas/cientos de invocaciones; estimar costo de API Anthropic antes de lanzarlo a full velocidad (ver sección 5).
 
 ### D. Backfill hacia atrás para la etapa Manifestación faltante (lo más nuevo/experimental — dejar para el final)
 

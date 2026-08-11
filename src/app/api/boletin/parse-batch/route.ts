@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { computeExpedienteKey } from '@/lib/expedienteKey'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
   // Get unparsed records with a PDF URL
   const { data: records, error } = await admin
     .from('boletin_publicaciones')
-    .select('id, nombre, cve, url_pdf')
+    .select('id, nombre, titular, region, cve, url_pdf, expediente_key')
     .eq('pdf_parsed', false)
     .not('url_pdf', 'is', null)
     .order('fecha', { ascending: false })
@@ -125,10 +126,28 @@ export async function GET(req: NextRequest) {
       if (rest.ancho != null) updatePayload.ancho = rest.ancho
       if (rest.huso  != null) updatePayload.huso  = rest.huso
 
+      // Promover expediente_key a clave fuerte (rol+juzgado) si el parse los reveló
+      // — ver docs/plan-etapas-tramite.md sección A.
+      const newKey = computeExpedienteKey({
+        nombre: pub.nombre, titular: pub.titular, region: pub.region,
+        causa_rol: rest.causa_rol, juzgado: rest.juzgado,
+      })
+      updatePayload.expediente_key = newKey.key
+
       await admin
         .from('boletin_publicaciones')
         .update(updatePayload as any)
         .eq('id', pub.id)
+
+      // Reconciliar: otros documentos del mismo trámite (misma clave débil, aún
+      // sin parsear) heredan la clave fuerte recién descubierta.
+      if (newKey.strong && pub.expediente_key && pub.expediente_key !== newKey.key) {
+        await admin
+          .from('boletin_publicaciones')
+          .update({ expediente_key: newKey.key } as any)
+          .eq('expediente_key', pub.expediente_key)
+          .neq('id', pub.id)
+      }
 
       results.push({ nombre: pub.nombre, cve: pub.cve ?? '', ok: true })
     } catch (e) {

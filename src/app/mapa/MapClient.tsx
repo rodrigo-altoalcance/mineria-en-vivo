@@ -547,7 +547,10 @@ export default function MapClient({
 
         // Async: load boletín data for this concession
         if (NOMBRE) {
-          fetch(`/api/boletin/concesion?nombre=${encodeURIComponent(NOMBRE)}`)
+          // titular desambigua entre expedientes distintos con el mismo nombre
+          // (ver /api/boletin/concesion — agrupa por expediente_key, no por nombre)
+          const titularQS = TITULAR_NOMBRE ? `&titular=${encodeURIComponent(TITULAR_NOMBRE)}` : ''
+          fetch(`/api/boletin/concesion?nombre=${encodeURIComponent(NOMBRE)}${titularQS}`)
             .then(r => r.json())
             .then((pubs: any[]) => {
               const el = document.getElementById('modal-boletin')
