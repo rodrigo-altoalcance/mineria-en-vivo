@@ -60,7 +60,9 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con esta estructu
   }
 }
 
-Para las coordenadas: busca la tabla con L1, L2, L3, L4 o los vértices del cuadrángulo. El NORTE de L1 es el campo "norte". El ESTE de L1 es el campo "este". El "alto" es la diferencia de Norte entre L1 y L4 (o L2 y L3). El "ancho" es la diferencia de Este entre L1 y L2 (o L3 y L4). Para "huso": busca el número de huso UTM (ej: "Huso 19", "Huso 18"); en Chile norte es típicamente 19, centro-sur es 18.`
+Para las coordenadas ("norte", "este", "alto", "ancho"): estos 4 campos SOLO se completan si el documento entrega coordenadas U.T.M. ABSOLUTAS (Norte/Este en metros) para vértices llamados L1, L2, L3, L4 (o P.I./Vértice 1-4 si el documento no usa nomenclatura "L"). En ese caso: el NORTE de L1 (o Vértice 1) es "norte", el ESTE de L1 (o Vértice 1) es "este", "alto" es la diferencia de Norte entre L1 y L4, "ancho" es la diferencia de Este entre L1 y L2.
+Muchas solicitudes de mensura NO dan coordenadas absolutas para L1-L4 — en vez de eso describen un trazado por AZIMUT y DISTANCIA ("con azimut de X grados y una distancia de Y metros se encuentra el vértice L1..."). Esos números de distancia (Y metros) NO son coordenadas ni diferencias de coordenadas — son la longitud de un tramo del polígono. Si el documento usa este formato de azimut+distancia y no entrega coordenadas absolutas para L1-L4, devuelve null en "norte", "este", "alto" y "ancho" — no calcules ni aproximes, y no uses las coordenadas del P.I. ni las distancias del trazado como sustituto.
+Para "huso": busca el número de huso UTM (ej: "Huso 19", "Huso 18"); en Chile norte es típicamente 19, centro-sur es 18.`
 
 export async function GET(req: NextRequest) {
   if (!isAuthorized(req)) {
@@ -149,14 +151,30 @@ export async function GET(req: NextRequest) {
     area_ha:         rest.area_ha          ?? null,
     orden:           rest.orden            ?? null,
     observaciones:   rest.observaciones    ?? null,
-    doc:             cronologia ? JSON.stringify(cronologia) : null,
   }
   // Only overwrite coordinates if newly extracted — never replace existing value with null
+  // (esto solo protege campos "planos"; ver merge de cronología más abajo para "doc")
   if (rest.norte != null) update.norte = rest.norte
   if (rest.este  != null) update.este  = rest.este
   if (rest.alto  != null) update.alto  = rest.alto
   if (rest.ancho != null) update.ancho = rest.ancho
   if (rest.huso  != null) update.huso  = rest.huso
+
+  // Mergear cronología con la ya guardada en vez de sobrescribirla entera: al
+  // reprocesar un documento (ej. tras ajustar el prompt) el LLM no siempre repite
+  // TODOS los campos que ya había extraído bien antes (no-determinismo) — sin este
+  // merge, un re-parse puede borrar una fecha correcta solo porque esta vez no
+  // salió en la respuesta.
+  let mergedCron: Record<string, any> = {}
+  if (pub.doc) {
+    try { mergedCron = JSON.parse(pub.doc) } catch { /* doc previo corrupto, se ignora */ }
+  }
+  if (cronologia) {
+    for (const k of Object.keys(cronologia)) {
+      if (cronologia[k] != null && String(cronologia[k]).trim() !== '') mergedCron[k] = cronologia[k]
+    }
+  }
+  update.doc = Object.keys(mergedCron).length ? JSON.stringify(mergedCron) : null
 
   const { error: updateErr } = await admin
     .from('boletin_publicaciones')

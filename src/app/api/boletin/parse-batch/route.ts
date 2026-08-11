@@ -56,6 +56,8 @@ Extrae los siguientes campos. Si un campo no está, devuelve null. Responde SOLO
   }
 }
 
+Para las coordenadas ("norte", "este", "alto", "ancho"): estos 4 campos SOLO se completan si el documento entrega coordenadas U.T.M. ABSOLUTAS (Norte/Este en metros) para vértices llamados L1, L2, L3, L4 (o P.I./Vértice 1-4 si el documento no usa nomenclatura "L"). En ese caso: el NORTE de L1 (o Vértice 1) es "norte", el ESTE de L1 (o Vértice 1) es "este", "alto" es la diferencia de Norte entre L1 y L4, "ancho" es la diferencia de Este entre L1 y L2.
+Muchas solicitudes de mensura NO dan coordenadas absolutas para L1-L4 — en vez de eso describen un trazado por AZIMUT y DISTANCIA ("con azimut de X grados y una distancia de Y metros se encuentra el vértice L1..."). Esos números de distancia (Y metros) NO son coordenadas ni diferencias de coordenadas — son la longitud de un tramo del polígono. Si el documento usa este formato de azimut+distancia y no entrega coordenadas absolutas para L1-L4, devuelve null en "norte", "este", "alto" y "ancho" — no calcules ni aproximes, y no uses las coordenadas del P.I. ni las distancias del trazado como sustituto.
 Para "huso": busca el número de huso UTM (ej: "Huso 19", "Huso 18"). En Chile norte suele ser 19, centro-sur suele ser 18. Extrae el número entero.`
 
 export async function GET(req: NextRequest) {
