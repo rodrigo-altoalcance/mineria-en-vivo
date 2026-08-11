@@ -1,0 +1,74 @@
+name: Boletín Minería — Drenado de Parse (LLM)
+
+# Paso C del plan (docs/plan-etapas-tramite.md): boletin-sync.yml solo trae el
+# listado (nombre/titular/región/CVE/PDF) — tribunal, N° ROL y la cronología
+# completa salen de parsear el PDF con LLM (claude-haiku-4-5), que hasta este
+# workflow corría 100% manual. /api/boletin/parse-batch tiene techo de ~8-10
+# documentos por invocación antes de pegarle al maxDuration=60 de Vercel
+# (confirmado: limit=10 ya dio 504 en pruebas) — por eso acá se loopea en vez
+# de pedir un batch grande de una sola vez.
+#
+# Tope conservador a propósito: con limit=8 y hasta 40 iteraciones (~320
+# docs/día tope), el backlog actual (~3.300 filas sin parsear al momento de
+# escribir esto) se drena en días, no de una sola vez — para no disparar un
+# gasto grande de golpe en la API de Anthropic sin que alguien lo haya visto
+# venir (ver docs/plan-etapas-tramite.md sección 5, "Costos/riesgos"). Para
+# ir más rápido, correr manualmente vía workflow_dispatch las veces que haga
+# falta, o subir max_iter en un dispatch puntual.
+
+on:
+  schedule:
+    - cron: '30 15 * * *'  # 11:30 CLT — 30 min después del sync (0 15 * * * en boletin-sync.yml)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Documentos por llamada a parse-batch (máx. 50 en el endpoint, pero >10 ya tiende a timeout de 60s)'
+        required: false
+        type: string
+        default: '8'
+      max_iter:
+        description: 'Tope de iteraciones en esta corrida (limit × max_iter = techo de docs procesados)'
+        required: false
+        type: string
+        default: '40'
+
+jobs:
+  drenar:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Loop de parse-batch hasta vaciar el backlog o llegar al tope
+        env:
+          LIMIT: ${{ inputs.limit || '8' }}
+          MAX_ITER: ${{ inputs.max_iter || '40' }}
+        run: |
+          set -o pipefail
+          URL="${{ secrets.NEXT_PUBLIC_APP_URL }}/api/boletin/parse-batch?secret=${{ secrets.BOLETIN_SYNC_SECRET }}&limit=${LIMIT}"
+          total=0
+          i=0
+          while [ "$i" -lt "$MAX_ITER" ]; do
+            i=$((i + 1))
+            HTTP_CODE=$(curl -s -o /tmp/resp.json -w '%{http_code}' -X GET "$URL")
+            echo "== iteración $i/$MAX_ITER (http $HTTP_CODE) =="
+            jq . /tmp/resp.json || cat /tmp/resp.json
+
+            if [ "$HTTP_CODE" -ge 400 ]; then
+              echo "::error::parse-batch falló con HTTP $HTTP_CODE en la iteración $i"
+              exit 1
+            fi
+
+            processed=$(jq -r '.processed // 0' /tmp/resp.json)
+            errors=$(jq -r '.errors // 0' /tmp/resp.json)
+            total=$((total + processed))
+
+            if [ "$processed" -eq 0 ]; then
+              echo "Backlog drenado (processed:0) en la iteración $i — nada más pendiente por ahora."
+              break
+            fi
+            if [ "$errors" -gt 0 ]; then
+              echo "::warning::$errors error(es) en la iteración $i (quedan marcados pdf_parsed=true igual, no se reintentan solos)"
+            fi
+
+            sleep 3  # no golpear diariooficial.interior.gob.cl / la API de Anthropic en ráfaga
+          done
+          echo "Total procesados en esta corrida: $total"
