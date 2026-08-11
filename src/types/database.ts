@@ -81,6 +81,39 @@ export interface Database {
         Update: Record<string, never>
         Relationships: []
       }
+      expedientes: {
+        Row: ExpedienteRow
+        Insert: {
+          expediente_key: string
+          nombre?: string | null
+          titular?: string | null
+          region?: string | null
+          comuna?: string | null
+          juzgado?: string | null
+          causa_rol?: string | null
+          conservador?: string | null
+          inscripcion_fs?: string | null
+          inscripcion_date?: string | null
+          area_ha?: string | null
+          manifestacion_presentac?: string | null
+          manifestacion_orden?: string | null
+          manifestacion_inscripcion?: string | null
+          manifestacion_publicacion?: string | null
+          mensura_solicitud?: string | null
+          mensura_publicacion?: string | null
+          sentencia_fecha?: string | null
+          plazo_mensura?: string | null
+          plazo_vigencia?: string | null
+          etapa_actual?: string | null
+          etapa_anterior?: string | null
+          etapa_cambiada_at?: string | null
+          revisado_at?: string | null
+          publicaciones_count?: number
+          updated_at?: string
+        }
+        Update: Record<string, never>
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>
@@ -129,4 +162,36 @@ export type BoletinPublicacion = {
   created_at: string
   // Clave de agrupación por expediente — ver src/lib/expedienteKey.ts
   expediente_key: string | null
+}
+
+// Estado consolidado por trámite — ver src/lib/expedientes.ts
+export type ExpedienteRow = {
+  id: string
+  expediente_key: string
+  nombre: string | null
+  titular: string | null
+  region: string | null
+  comuna: string | null
+  juzgado: string | null
+  causa_rol: string | null
+  conservador: string | null
+  inscripcion_fs: string | null
+  inscripcion_date: string | null
+  area_ha: string | null
+  manifestacion_presentac: string | null
+  manifestacion_orden: string | null
+  manifestacion_inscripcion: string | null
+  manifestacion_publicacion: string | null
+  mensura_solicitud: string | null
+  mensura_publicacion: string | null
+  sentencia_fecha: string | null
+  plazo_mensura: string | null
+  plazo_vigencia: string | null
+  etapa_actual: string | null
+  etapa_anterior: string | null
+  etapa_cambiada_at: string | null
+  revisado_at: string | null
+  publicaciones_count: number
+  created_at: string
+  updated_at: string
 }

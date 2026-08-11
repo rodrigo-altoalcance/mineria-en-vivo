@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { computeExpedienteKey } from '@/lib/expedienteKey'
+import { upsertExpediente } from '@/lib/expedientes'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -205,6 +206,11 @@ export async function GET(req: NextRequest) {
       .eq('expediente_key', pub.expediente_key)
       .neq('id', pub.id)
   }
+
+  // Materializar/actualizar el estado consolidado del expediente (tabla
+  // `expedientes`, paso B del plan) — agrega TODAS las publicaciones del
+  // trámite (ya reconciliadas arriba), no solo esta.
+  await upsertExpediente(admin, newKey.key)
 
   return NextResponse.json({
     ok: true,
