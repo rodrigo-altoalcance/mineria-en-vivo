@@ -2,6 +2,14 @@
 
 > Este documento es el plan de trabajo para otra conversación de Claude Code. Contexto previo (sesión 2026-08-11): se implementó el stepper de etapa + grid de cronología en `/mapa` (commit `853f8a1`), se corrigió un bug de extracción de coordenadas azimut+distancia (commit `01249fd`), y se backfilleó/parseó manualmente el caso `FRANCISCA FERNANDA 1/30` (CVE 2789742 manifestación + CVE 2848521 mensura) como prueba de concepto end-to-end. Este plan generaliza ese proceso manual a todas las concesiones.
 
+## Estado (sesión 2026-08-11, continuación — pasos A, B, C hechos)
+
+- ✅ **Paso A — `expediente_key`**: commit `03425c0`. Migración aplicada, backfill corrido sobre las 3.643 filas existentes (0 sin key, 429 con clave fuerte, 3.536 expedientes distintos). `sync`/`parse-pdf`/`parse-batch`/`/api/boletin/concesion`/`MapClient.tsx` migrados. Verificado en navegador: `FRANCISCA FERNANDA 1/30` agrupa bien, y nombres duplicados reales (`ATENEA 1/10`, 2 titulares distintos) ya se desambiguan por `titular`.
+- ✅ **Paso B — tabla `expedientes`**: commit `0555748`. Migración aplicada, `upsertExpediente()` en `src/lib/expedientes.ts`, wireado en `parse-pdf`/`parse-batch`. Backfill inicial: 3.536 expedientes materializados (`scripts/backfill-expedientes.mjs`). Bug encontrado y corregido en el camino: los campos planos (juzgado/causa_rol/inscripcion_fs/etc.) NO se mergean entre documentos — se toman solo del más reciente, igual que `MapClient.tsx` (mergearlos filtraba inscripciones de manifestaciones viejas y hacía creer que el expediente ya estaba en Inscripción CBR). **Pendiente**: `/api/boletin/concesion`/`MapClient.tsx` siguen leyendo en vivo (recalculando), todavía no leen de esta tabla — la migración de lectura queda para cuando se construya la sección 3 (Novedades).
+- ✅ **Paso C — drenado automático**: commit `38162d2`. `.github/workflows/boletin-parse.yml`, cron 11:30 CLT (30 min después del sync), loop con tope conservador `limit=8 × max_iter=40` (~320 docs/día) para no drenar los ~3.300 pendientes de un saque. Probado en vivo contra producción (5 docs reales, `processed:5 success:5 errors:0`) — confirmado que `expediente_key` se promueve y `expedientes` se materializa correctamente end-to-end.
+- ✅ **Extra no planeado, pedido durante la sesión**: cronología del modal `/mapa` ahora es clickeable — cada fecha (stepper + grilla) y los campos Juzgado/Causa ROL/Conservador/FS-N° abren, en pestaña nueva, el PDF específico del que salió ese dato (antes solo había un link genérico "Ver PDF" al documento más reciente). Commit `d0a6886`, `src/lib/etapaTramite.ts::mergeCronologiaConFuente()`.
+- ⏳ **Pendiente**: paso D (backfill hacia atrás de manifestaciones faltantes) y sección 3 (vista "Novedades del boletín") — no empezados.
+
 ## 0. Corrección a la idea original
 
 La idea de partida era *"petición HTTP simulada al Buscador del Diario Oficial, filtrando por categoría Minería, últimas 24h"*. **No hace falta construir eso**: `boletinoficialdemineria.cl` (lo que ya scrapea `src/app/api/boletin/sync/route.ts`) es un sitio dedicado exclusivamente a la Sección VII de minería — ya es 100% categoría minería por construcción, sin necesidad de filtrar nada, y es más simple/estable que el buscador genérico del Diario Oficial (que cubre las ~7 secciones del diario y no tiene garantía de no pedir CAPTCHA). **Reusar y extender el sync existente, no reemplazarlo.**
@@ -19,14 +27,14 @@ Lo que sí falta y es el foco real de este plan:
 
 ## 2. Arquitectura propuesta (4 piezas, en orden de implementación)
 
-### A. Clave de agrupación estable por expediente (hacer primero — todo lo demás depende de esto)
+### A. Clave de agrupación estable por expediente (hacer primero — todo lo demás depende de esto) — ✅ HECHO (commit `03425c0`)
 
 - Agregar columna `expediente_key` a `boletin_publicaciones` (o tabla nueva `expedientes`).
 - Una vez parseado un documento (`causa_rol` + `juzgado` ya extraídos), esa combinación es la clave fuerte — es único por causa judicial en Chile.
 - Para filas sin parsear todavía, usar un fallback débil: `slugify(nombre) + slugify(titular) + region` — suficiente para no perder el hilo mientras se espera el parse, pero se re-concilia con la clave fuerte apenas el parse corre.
 - Migrar `/api/boletin/concesion` (y el merge de `MapClient.tsx`) para agrupar por `expediente_key` en vez de `ilike(nombre)`.
 
-### B. Materializar tabla `expedientes` (estado consolidado por trámite)
+### B. Materializar tabla `expedientes` (estado consolidado por trámite) — ✅ HECHO (commit `0555748`)
 
 Una fila por `expediente_key` con:
 - `nombre`, `titular`, `juzgado`, `causa_rol`, `region`, `comuna`
@@ -37,7 +45,7 @@ Una fila por `expediente_key` con:
 
 `parse-pdf`/`parse-batch` hacen upsert en esta tabla además de actualizar la fila de `boletin_publicaciones` (igual que hoy mergean `doc`, pero ahora el merge se guarda consolidado, no recalculado client-side cada vez).
 
-### C. Automatizar lo que hoy es manual (sync diario + drenado de parse)
+### C. Automatizar lo que hoy es manual (sync diario + drenado de parse) — ✅ HECHO (commit `38162d2`)
 
 Confirmado en código (sesión 2026-08-11 cont.): `boletin-sync.yml` **solo** llama a `/api/boletin/sync` — nunca a `parse-pdf`/`parse-batch`. El parseo de PDF hoy es 100% manual (alguien pega la URL a mano o corre un script). Backlog real al momento de escribir esto: **3.308 de 3.643 filas `pdf_parsed=false`** (creció desde el ~2000 estimado el día anterior — sigue sin drenarse mientras el sync diario sigue metiendo filas nuevas).
 
@@ -76,11 +84,11 @@ Filtro por `revisado_at is null` para ver solo lo pendiente de mirar. Esto es lo
 
 ## 4. Orden de implementación sugerido
 
-1. `expediente_key` + migración de `/api/boletin/concesion` y `MapClient.tsx` al nuevo agrupador — **bloqueante para todo lo demás**.
-2. Tabla `expedientes` + upsert en `parse-pdf`/`parse-batch`.
-3. Drenado automático diario de `parse-batch` (cron + loop) — soluciona backlog y da consistencia día a día.
-4. Vista "Novedades del boletín" con marcado de revisado.
-5. Job semanal de backfill hacia atrás (D) — dejar para el final, es lo más costoso/experimental y lo que menos urgencia tiene una vez que 1-4 estén andando (para expedientes nuevos que arrancan en manifestación, el gap ni siquiera existe).
+1. ✅ `expediente_key` + migración de `/api/boletin/concesion` y `MapClient.tsx` al nuevo agrupador — **bloqueante para todo lo demás**.
+2. ✅ Tabla `expedientes` + upsert en `parse-pdf`/`parse-batch`.
+3. ✅ Drenado automático diario de `parse-batch` (cron + loop) — soluciona backlog y da consistencia día a día. Activo desde que este commit llegue a `main`/`origin` — primera corrida automática mañana 11:30 CLT.
+4. ⏳ Vista "Novedades del boletín" con marcado de revisado — no empezada. Requiere además migrar `/api/boletin/concesion`/`MapClient.tsx` a leer de `expedientes` en vez de recalcular en vivo (la tabla ya existe y se mantiene al día, pero hoy nada la lee).
+5. ⏳ Job semanal de backfill hacia atrás (D) — no empezado, dejar para el final, es lo más costoso/experimental y lo que menos urgencia tiene una vez que 1-4 estén andando (para expedientes nuevos que arrancan en manifestación, el gap ni siquiera existe).
 
 ## 5. Costos/riesgos a tener presente
 
