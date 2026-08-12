@@ -8,6 +8,7 @@
 - ✅ **Paso B — tabla `expedientes`**: commit `0555748`. Migración aplicada, `upsertExpediente()` en `src/lib/expedientes.ts`, wireado en `parse-pdf`/`parse-batch`. Backfill inicial: 3.536 expedientes materializados (`scripts/backfill-expedientes.mjs`). Bug encontrado y corregido en el camino: los campos planos (juzgado/causa_rol/inscripcion_fs/etc.) NO se mergean entre documentos — se toman solo del más reciente, igual que `MapClient.tsx` (mergearlos filtraba inscripciones de manifestaciones viejas y hacía creer que el expediente ya estaba en Inscripción CBR). **Pendiente**: `/api/boletin/concesion`/`MapClient.tsx` siguen leyendo en vivo (recalculando), todavía no leen de esta tabla — la migración de lectura queda para cuando se construya la sección 3 (Novedades).
 - ✅ **Paso C — drenado automático**: commit `38162d2`. `.github/workflows/boletin-parse.yml`, cron 11:30 CLT (30 min después del sync), loop con tope conservador `limit=8 × max_iter=40` (~320 docs/día) para no drenar los ~3.300 pendientes de un saque. Probado en vivo contra producción (5 docs reales, `processed:5 success:5 errors:0`) — confirmado que `expediente_key` se promueve y `expedientes` se materializa correctamente end-to-end.
 - ✅ **Extra no planeado, pedido durante la sesión**: cronología del modal `/mapa` ahora es clickeable — cada fecha (stepper + grilla) y los campos Juzgado/Causa ROL/Conservador/FS-N° abren, en pestaña nueva, el PDF específico del que salió ese dato (antes solo había un link genérico "Ver PDF" al documento más reciente). Commit `d0a6886`, `src/lib/etapaTramite.ts::mergeCronologiaConFuente()`.
+- 🔍 **Paso E — integración PJUD (investigado, NO construido)**: se investigó (sin escribir código de producción) si se puede traer, por cada movimiento judicial de una causa, su documento individual — ver sección E más abajo. Conclusión: técnicamente posible pero requiere infraestructura nueva (navegador headless, no un simple `fetch`), y no se justificaba construirlo en la misma sesión sin que el usuario viera el tamaño real primero.
 - ⏳ **Pendiente**: paso D (backfill hacia atrás de manifestaciones faltantes) y sección 3 (vista "Novedades del boletín") — no empezados.
 
 ## 0. Corrección a la idea original
@@ -71,6 +72,35 @@ No hay forma barata de "buscar" la manifestación de un expediente detectado tar
    - después de sincronizar, busca coincidencias por `titular` + `comuna`/`región` (no por nombre exacto — la manifestación a veces se publica sin el sufijo de fracción, ej. "FRANCISCA FERNANDA" vs "FRANCISCA FERNANDA 1/30") entre las filas nuevas y los expedientes pendientes.
    - **no auto-vincula**: deja el match propuesto en una cola de revisión (`expedientes.manifestacion_candidata_cve`) para que el usuario confirme antes de mergear — evitar que un match por titular+comuna ligue el expediente equivocado.
 
+### E. Integración con PJUD — Oficina Judicial Virtual (investigado 2026-08-11, NO construido)
+
+**Origen**: el usuario reportó que para `SANCHO 1 AL 30`, las 4 fechas de la etapa Manifestación (presentación/orden/inscripción/publicación) apuntaban las 4 al mismo PDF en el modal de `/mapa`, esperando un documento distinto por cada una.
+
+**Primero se verificó que NO es un bug**: se bajó y leyó el PDF real (CVE 2811781) — las 4 fechas efectivamente están narradas dentro de ese único documento (el Conservador de Minas certifica y publica de una vez el historial completo hasta ese punto). Solo existe una publicación en `boletin_publicaciones` para ese expediente — no hay 4 documentos que perdimos, nunca existieron 4 documentos en el boletín. Esto es distinto de `FRANCISCA FERNANDA 1/30`, donde Manifestación y Mensura sí son 2 documentos separados (cada etapa grande se publica por su cuenta; los sub-eventos dentro de una etapa no).
+
+**Pero el usuario mostró que SÍ existe una fuente con documento por movimiento**: `oficinajudicialvirtual.pjud.cl` (portal público de seguimiento de causas del Poder Judicial, no el Diario Oficial). Ahí la misma causa (V-465-2026, 2° Juzgado de Letras de Copiapó — datos que **ya tenemos** de `parse-batch`) muestra 3 movimientos con documento propio cada uno:
+
+| Folio | Trámite | Fecha | Mapea a |
+|---|---|---|---|
+| 1 | Ingreso Manifestación (Escrito) | 22/04/2026 | `manifestacion_presentac` (match exacto) |
+| 2 | Certificado ingreso solicitud | 24/04/2026 | sin campo propio hoy — dato nuevo |
+| 3 | Ordena Inscribir y Publicar (Resolución) | 27/04/2026 | `manifestacion_orden` (match exacto) |
+
+Bonus encontrado de paso: el detalle de la causa en PJUD mostraba `Etapa: 1 Mensura` — más avanzado que lo que sabíamos por el boletín (que todavía no había publicado la mensura). PJUD podría detectar cambios de etapa **antes** que el boletín en algunos casos.
+
+**Investigación técnica (sin construir nada, solo explorando en el navegador)**:
+1. La búsqueda "Consulta Unificada" (Competencia=Civil, Corte, Tribunal, Rol, Año — todo ya lo tenemos) encuentra la causa exacta **sin pedir CAPTCHA** al usarla como invitado desde un navegador real.
+2. El detalle de la causa se pide con `POST` a `.../ADIR_871/civil/modal/causaCivil.php` — esa única llamada devuelve la tabla de "Historia" completa con los 3 links de documento **ya incluidos** (no hace falta pedir cada uno por separado).
+3. Cada link es `docuN.php?dtaDoc=<JWT>` — el JWT es válido ~1 hora desde que se generó (`iat`/`exp` en el payload) y su claim `data` es un blob **cifrado**, no volvemos a poder generarlo nosotros sin pasar por el flujo real del sitio. **No se puede guardar el link tal cual** — hay que descargar el PDF al momento de sincronizar y subirlo a storage propio (Supabase Storage) para poder linkearlo después sin que expire.
+4. **Hallazgo que cambia el tamaño del problema**: `curl` directo a `indexN.php` (sin navegador) devuelve **403 Forbidden**. El sitio bloquea acceso HTTP simple — a diferencia de `boletinoficialdemineria.cl`/`diariooficial.interior.gob.cl` (que sí funcionan con `fetch` plano, es lo que usan `sync`/`parse-pdf` hoy), automatizar PJUD requeriría **navegador headless real** (Playwright o similar) con sesión persistente — infraestructura nueva, no una extensión de las serverless functions actuales de Vercel.
+5. No se pudieron ver los parámetros exactos de esas llamadas (el request del click al detalle incluye datos de sesión/cookie) — la herramienta de browser usada para explorar los bloqueó activamente como dato sensible, correctamente: el propio documento descargado (Folio 1) trae RUT y domicilio de una persona natural (el representante), no solo de la sociedad titular.
+
+**Decisión sobre datos personales** (confirmada con el usuario): tratar los documentos de PJUD con el mismo criterio que el boletín — es información judicial igual de pública, PJUD no agrega sensibilidad nueva respecto a lo que el boletín ya expone.
+
+**Se descartó construirlo en esta sesión** — no es una pieza chica: además de lo anterior, hace falta (a) tabla nueva `expediente_movimientos` (expediente_key, folio, trámite, desc_tramite, fecha, foja, storage_path, pjud_synced_at), (b) bucket de Supabase Storage nuevo, (c) reverse-engineering del flujo exacto de request con un navegador de verdad (devtools), no a través de este canal, y (d) decidir dónde correr el navegador headless (no es gratis ni trivial en Vercel).
+
+**Alternativa mucho más barata, no evaluada a fondo pero anotada como fallback**: en vez de traer y guardar los documentos, agregar en el modal un botón "Ver en PJUD" que abra `oficinajudicialvirtual.pjud.cl` con la búsqueda pre-cargada (Tribunal+Rol+Año, todo en query string, sin backend nuevo) — el usuario ve los movimientos y baja el que quiera a mano, sin que nosotros toquemos el JWT ni corramos nada headless.
+
 ## 3. Vista de revisión ("Novedades del boletín")
 
 Nueva sección (en `/boletin` o un tab nuevo) que lista, ordenado por `etapa_cambiada_at desc`:
@@ -89,6 +119,7 @@ Filtro por `revisado_at is null` para ver solo lo pendiente de mirar. Esto es lo
 3. ✅ Drenado automático diario de `parse-batch` (cron + loop) — soluciona backlog y da consistencia día a día. Activo desde que este commit llegue a `main`/`origin` — primera corrida automática mañana 11:30 CLT.
 4. ⏳ Vista "Novedades del boletín" con marcado de revisado — no empezada. Requiere además migrar `/api/boletin/concesion`/`MapClient.tsx` a leer de `expedientes` en vez de recalcular en vivo (la tabla ya existe y se mantiene al día, pero hoy nada la lee).
 5. ⏳ Job semanal de backfill hacia atrás (D) — no empezado, dejar para el final, es lo más costoso/experimental y lo que menos urgencia tiene una vez que 1-4 estén andando (para expedientes nuevos que arrancan en manifestación, el gap ni siquiera existe).
+6. 🔍 Integración PJUD (E) — investigado, no empezado. Antes de construir la versión completa (navegador headless + storage), considerar primero el fallback barato ("Ver en PJUD" con búsqueda pre-cargada, sin backend nuevo) y ver si eso ya alcanza.
 
 ## 5. Costos/riesgos a tener presente
 
