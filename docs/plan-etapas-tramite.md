@@ -9,6 +9,9 @@
 - ✅ **Paso C — drenado automático**: commit `38162d2`. `.github/workflows/boletin-parse.yml`, cron 11:30 CLT (30 min después del sync), loop con tope conservador `limit=8 × max_iter=40` (~320 docs/día) para no drenar los ~3.300 pendientes de un saque. Probado en vivo contra producción (5 docs reales, `processed:5 success:5 errors:0`) — confirmado que `expediente_key` se promueve y `expedientes` se materializa correctamente end-to-end.
 - ✅ **Extra no planeado, pedido durante la sesión**: cronología del modal `/mapa` ahora es clickeable — cada fecha (stepper + grilla) y los campos Juzgado/Causa ROL/Conservador/FS-N° abren, en pestaña nueva, el PDF específico del que salió ese dato (antes solo había un link genérico "Ver PDF" al documento más reciente). Commit `d0a6886`, `src/lib/etapaTramite.ts::mergeCronologiaConFuente()`.
 - 🔍 **Paso E — integración PJUD (investigado, NO construido)**: se investigó (sin escribir código de producción) si se puede traer, por cada movimiento judicial de una causa, su documento individual — ver sección E más abajo. Conclusión: técnicamente posible pero requiere infraestructura nueva (navegador headless, no un simple `fetch`), y no se justificaba construirlo en la misma sesión sin que el usuario viera el tamaño real primero.
+- 🔍 **Paso E.1 — propuesta con 3 opciones (2026-08-12, investigado, NO construido)**: investigación de mercado ante el pedido "poder revisar las causas de concesiones mineras". Confirmado que no hay fuente nueva que reemplace el boletín para Diario Oficial. Para PJUD apareció una opción nueva no evaluada antes (API paga de terceros, `boostr.cl`, $2.000 CLP/consulta) como alternativa a construir navegador headless propio — ver sección E.1 más abajo para el detalle y la recomendación (empezar por el botón "Ver en PJUD" gratis, validar la API paga con una prueba de $10.000 CLP antes de comprometer presupuesto mayor).
+- 🔍 **Paso 2.F — notificaciones sobre favoritos (2026-08-12, propuesto, NO construido)**: pedido de notificar al usuario cuando hay un documento/movimiento nuevo en una concesión que marcó como favorita (`favoritos` ya existe), corriendo todos los días, con la escala como preocupación explícita. Diseño: reusa el trabajo caro que ya corre diario para el universo completo (sync + parse-batch, pasos A-C) — lo nuevo es solo una comparación barata acotada a los `expediente_key` distintos presentes en `favoritos` (no el universo total), más una tabla `notificaciones` y una campanita en el header. Ver sección 2.F para el diseño de 4 piezas y el orden sugerido.
+- 🔍 **Paso E.2 — pipeline end-to-end de monitoreo de causas (2026-08-12, propuesto, NO construido)**: responde "cómo se resuelve monitorear causas para actualizar la BD y notificar" uniendo D+E+E.1+2.F en un solo circuito: detectar movimiento nuevo en PJUD (fuente/cadencia según lo que decida E.1) → guardarlo en `expediente_movimientos` (tabla nueva) y reflejar avance de etapa en `expedientes` → disparar notificación reusando la tabla/campanita de 2.F con un tercer tipo (`pjud_movimiento`). Orden correcto: decidir/validar fuente en E.1 primero, después construir este pipeline. Ver sección E.2.
 - ⏳ **Pendiente**: paso D (backfill hacia atrás de manifestaciones faltantes) y sección 3 (vista "Novedades del boletín") — no empezados.
 
 ## 0. Corrección a la idea original
@@ -89,10 +92,11 @@ No hay forma barata de "buscar" la manifestación de un expediente detectado tar
 Bonus encontrado de paso: el detalle de la causa en PJUD mostraba `Etapa: 1 Mensura` — más avanzado que lo que sabíamos por el boletín (que todavía no había publicado la mensura). PJUD podría detectar cambios de etapa **antes** que el boletín en algunos casos.
 
 **Investigación técnica (sin construir nada, solo explorando en el navegador)**:
-1. La búsqueda "Consulta Unificada" (Competencia=Civil, Corte, Tribunal, Rol, Año — todo ya lo tenemos) encuentra la causa exacta **sin pedir CAPTCHA** al usarla como invitado desde un navegador real.
+1. La búsqueda "Consulta Unificada" > "Búsqueda por RIT" pide, en cascada: Competencia (`Civil` es una de 7 opciones — Corte Suprema/Corte Apelaciones/Civil/Laboral/Penal/Cobranza/Familia) → **Corte de Apelaciones** → Tribunal → Rol → Año. **Corrección sobre lo que se creía "ya lo tenemos" (re-chequeado en vivo el 2026-08-12)**: el parseo LLM (`parse-pdf`) hoy solo extrae `juzgado` (nombre del tribunal) y `causa_rol` — **no extrae la Corte de Apelaciones**, que es un campo obligatorio y distinto del Tribunal en este formulario (un Tribunal pertenece a una Corte, pero no se puede inferir el string exacto que el `<select>` de Corte espera solo a partir del nombre del juzgado sin una tabla de mapeo Juzgado→Corte). Gap nuevo a resolver antes de automatizar: o se construye esa tabla de mapeo (son ~17 Cortes de Apelaciones en Chile, fijas, se arma una vez) o se le pide al LLM que también extraiga la Corte si aparece mencionada en el PDF.
 2. El detalle de la causa se pide con `POST` a `.../ADIR_871/civil/modal/causaCivil.php` — esa única llamada devuelve la tabla de "Historia" completa con los 3 links de documento **ya incluidos** (no hace falta pedir cada uno por separado).
 3. Cada link es `docuN.php?dtaDoc=<JWT>` — el JWT es válido ~1 hora desde que se generó (`iat`/`exp` en el payload) y su claim `data` es un blob **cifrado**, no volvemos a poder generarlo nosotros sin pasar por el flujo real del sitio. **No se puede guardar el link tal cual** — hay que descargar el PDF al momento de sincronizar y subirlo a storage propio (Supabase Storage) para poder linkearlo después sin que expire.
 4. **Hallazgo que cambia el tamaño del problema**: `curl` directo a `indexN.php` (sin navegador) devuelve **403 Forbidden**. El sitio bloquea acceso HTTP simple — a diferencia de `boletinoficialdemineria.cl`/`diariooficial.interior.gob.cl` (que sí funcionan con `fetch` plano, es lo que usan `sync`/`parse-pdf` hoy), automatizar PJUD requeriría **navegador headless real** (Playwright o similar) con sesión persistente — infraestructura nueva, no una extensión de las serverless functions actuales de Vercel.
+6. **Sin confirmar (re-chequeado 2026-08-12)**: la página de "Consulta Unificada" muestra un badge de reCAPTCHA visible en la esquina — no se completó una búsqueda real hoy para confirmar si bloquea el submit como invitado o es solo un reCAPTCHA v3 invisible (verificación de riesgo en segundo plano, sin interacción). La sesión anterior (2026-08-11) reportó que la búsqueda "no pide CAPTCHA como invitado", pero no quedó registrado si ya existía este badge entonces. **Antes de comprometerse a la opción 2 (Playwright)**, confirmar con una búsqueda real completa si el reCAPTCHA es solo pasivo (no bloquea) o interactivo (bloquearía un navegador headless sin un servicio de resolución de CAPTCHA aparte, que suma costo y complejidad no contemplados en la sección E.1).
 5. No se pudieron ver los parámetros exactos de esas llamadas (el request del click al detalle incluye datos de sesión/cookie) — la herramienta de browser usada para explorar los bloqueó activamente como dato sensible, correctamente: el propio documento descargado (Folio 1) trae RUT y domicilio de una persona natural (el representante), no solo de la sociedad titular.
 
 **Decisión sobre datos personales** (confirmada con el usuario): tratar los documentos de PJUD con el mismo criterio que el boletín — es información judicial igual de pública, PJUD no agrega sensibilidad nueva respecto a lo que el boletín ya expone.
@@ -100,6 +104,100 @@ Bonus encontrado de paso: el detalle de la causa en PJUD mostraba `Etapa: 1 Mens
 **Se descartó construirlo en esta sesión** — no es una pieza chica: además de lo anterior, hace falta (a) tabla nueva `expediente_movimientos` (expediente_key, folio, trámite, desc_tramite, fecha, foja, storage_path, pjud_synced_at), (b) bucket de Supabase Storage nuevo, (c) reverse-engineering del flujo exacto de request con un navegador de verdad (devtools), no a través de este canal, y (d) decidir dónde correr el navegador headless (no es gratis ni trivial en Vercel).
 
 **Alternativa mucho más barata, no evaluada a fondo pero anotada como fallback**: en vez de traer y guardar los documentos, agregar en el modal un botón "Ver en PJUD" que abra `oficinajudicialvirtual.pjud.cl` con la búsqueda pre-cargada (Tribunal+Rol+Año, todo en query string, sin backend nuevo) — el usuario ve los movimientos y baja el que quiera a mano, sin que nosotros toquemos el JWT ni corramos nada headless.
+
+### E.1 Propuesta (investigación de mercado, 2026-08-12) — 3 opciones, orden de implementación sugerido
+
+Se investigaron fuentes chilenas para "revisar causas de concesiones mineras" además del boletín (Diario Oficial) y PJUD directo. Conclusión: **no existe una fuente nueva que reemplace lo que ya tenemos.** No hay API oficial ni de SERNAGEOMIN ni de PJUD para esto — `boletinoficialdemineria.cl` (ya integrado) sigue siendo correcto y suficiente para "Diario Oficial". Para "Poder Judicial" (el gap real, sección E arriba) apareció una tercera opción de mercado que no estaba en el análisis del 2026-08-11: un proveedor que ya resolvió el scraping headless por nosotros.
+
+**No cambia nada de lo ya construido** — esto es sólo evaluación de cómo cerrar el gap de PJUD, no una migración de la fuente boletín.
+
+| # | Opción | Costo | Esfuerzo | Qué entrega |
+|---|---|---|---|---|
+| 1 | Link "Ver en PJUD" precargado (ya diseñado, sección E) | $0 | ~1h — un botón en el modal, sin backend | Usuario ve movimientos y documentos a mano, click afuera |
+| 2 | Navegador headless propio (Playwright) | Hosting del worker (no corre en Vercel) | Alto — reverse-engineering de sesión/JWT, tabla nueva, storage nuevo | Datos automatizados, guardados, sin costo marginal por consulta |
+| 3 | **Nuevo**: API de terceros (`boostr.cl`, plan "Poder Judicial") | **$2.000 CLP por consulta**, mínimo $10.000 CLP (5 consultas), créditos sin vencimiento | Medio — sin infra de scraping propia, solo integrar su API + webhook | Ellos hacen el scraping/headless; nosotros solo consumimos JSON |
+
+**Detalle de la opción 3 (nueva)**: `POST https://api.boostr.cl/poder_judicial/causes.json` (header `X-API-KEY`) es **asíncrona** — se manda `document_number` (RUT) + nombre + `context` (`civil`/`penal`/`apelacion`) + `callback_url`, y el resultado llega después vía webhook a esa URL con un array `causes`. **Ojo, esto importa para nuestro caso de uso**: busca por **RUT/nombre de una persona o empresa**, no por rol+tribunal de una causa puntual — es decir, resuelve "dame todas las causas de este titular", no "dame los movimientos de esta causa que ya identifiqué en el boletín". Puede servir para descubrir causas que no conocíamos, pero **no está confirmado** (la documentación pública no lo especifica) que el array `causes` traiga el detalle de movimientos por folio ni links a documentos — habría que pagar el mínimo de $10.000 CLP y hacer una consulta de prueba contra un RUT conocido (ej. el titular de `SANCHO 1 AL 30`) para comprobarlo antes de comprometer presupuesto en serio. El proveedor además es explícito en que no garantiza actualidad ni completitud de los datos.
+
+**Recomendación**:
+1. **Hacer ya la opción 1** (botón "Ver en PJUD" precargado) — cero riesgo, cero costo, cierra el gap de "poder revisar la causa" hoy mismo mientras se decide el resto.
+2. **Antes de invertir en 2 o 3, correr una prueba de $10.000 CLP contra la opción 3** con un caso real y confirmar si el array `causes` trae folio/trámite/fecha/documento por movimiento (lo que hoy solo se ve a mano en PJUD). Si sí: la opción 3 es objetivamente más barata que construir y mantener Playwright headless (opción 2) para el volumen actual (~pocas causas/día) — el costo por consulta ($2.000 CLP) es marginal comparado con las horas de ingeniería de reverse-engineering de sesión/JWT. Si no (solo lista causas sin detalle de movimientos), la opción 3 no resuelve el problema real y hay que ir directo a la opción 2 o quedarse en la opción 1.
+3. **No construir la opción 2 sin antes descartar la 3** — es la más cara en esfuerzo y la que menos se ajusta a la infraestructura actual (serverless en Vercel, sin worker persistente).
+
+Fuentes consultadas: [boletinoficialdemineria.cl](https://www.boletinoficialdemineria.cl/informacion.php) (confirma que el boletín ya es la fuente correcta y suficiente para Diario Oficial), [SERNAGEOMIN — Catastro Minero Online](https://www.sernageomin.cl/catastro-minero/) (consulta de rol/ubicación de concesión, sin API pública ni datos de causa judicial), [oficinajudicialvirtual.pjud.cl](https://oficinajudicialvirtual.pjud.cl/home/index.php) y [pjud.cl — Consulta de causas](https://www2.pjud.cl/consulta-de-causas2) (portal oficial, sin API pública documentada), [boostr.cl/poder-judicial](https://boostr.cl/poder-judicial) y su documentación (endpoint, [precio](https://docs.boostr.cl/reference/pricing-poder-judicial), [request/response](https://docs.boostr.cl/reference/pjud-get-causas)).
+
+### E.2 Pipeline end-to-end de monitoreo de causas (propuesta, 2026-08-12, NO construido) — une D + E + E.1 + 2.F
+
+**Pregunta que resuelve**: no solo "de dónde sacamos el dato" (E/E.1) sino el circuito completo — **cómo se detecta que una causa tiene algo nuevo, cómo se refleja en nuestra base de datos, y cómo dispara una notificación** — para que quede una sola pieza a construir después, no cuatro sueltas.
+
+**Dos fuentes, dos granularidades — no son intercambiables, son complementarias**:
+| Fuente | Qué detecta | Granularidad | Estado |
+|---|---|---|---|
+| Boletín (`boletin_publicaciones` → `expedientes`) | Cambio de **etapa** grande (Manifestación→Mensura→Sentencia→Inscripción) — cada etapa se publica como documento propio | Gruesa: 1 dato por etapa | ✅ Ya construido (pasos A-C) |
+| PJUD (`expediente_movimientos`, tabla nueva) | Cada **movimiento** individual dentro de una causa (ingreso, certificado, resolución) — incluye sub-eventos que el boletín nunca publica por separado (ver `SANCHO 1 AL 30`, sección E) | Fina: varios datos por etapa | 🔍 Propuesto, no construido — depende de decidir opción en E.1 |
+
+Ya vimos en la sección E que PJUD además puede **adelantarse** al boletín (mostró `Etapa: 1 Mensura` antes de que el boletín publicara la mensura) — por eso vale la pena aunque el boletín ya cubra el caso grueso.
+
+**Pipeline propuesto (4 pasos, extiende lo ya diseñado en D/E/2.F — nada nuevo conceptualmente, es la integración)**:
+
+1. **Qué causas monitorear**: mismo universo acotado que 2.F — `expediente_key` distintos presentes en `favoritos`, con `causa_rol`+`juzgado` ya conocidos (vienen del parseo LLM del boletín, paso B). No se monitorea el universo completo de expedientes, solo los favoritos — mismo argumento de escala que 2.F.
+2. **Detección**: cron (cadencia según qué opción de E.1 se elija — diaria si es opción 2/Playwright sin costo marginal, semanal o acotada por presupuesto si es opción 3/Boostr a $2.000 CLP/consulta) que, por cada causa a monitorear, trae los movimientos actuales desde la fuente elegida y los compara contra lo ya guardado en `expediente_movimientos` **por folio** (clave natural del movimiento en PJUD) — solo los folios nuevos son "evento".
+3. **Actualización de la base de datos**: cada folio nuevo se inserta en `expediente_movimientos` (`expediente_key, folio, tramite, fecha, foja, storage_path/url, fuente:'pjud', sync_at`, tabla ya prevista en la sección E). Si el movimiento implica avance de etapa (ej. "Ordena Inscribir y Publicar" ⇒ etapa Manifestación confirmada), se actualiza también `expedientes.etapa_actual`/`etapa_cambiada_at` — mismo criterio de cálculo que ya usa el boletín (`renderEtapaStepper`/paso B), para no divergir en cómo se decide la etapa según la fuente.
+4. **Notificación**: el mismo mecanismo de 2.F (tabla `notificaciones`, campanita), sin canal aparte — se agrega un tercer `tipo: 'pjud_movimiento'` junto a los dos que ya tenía 2.F (`nueva_publicacion`, `cambio_etapa`). El generador de 2.F (paso 3 de su diseño) ya queda escrito para reaccionar a "algo cambió en `expedientes`/tablas relacionadas de un `expediente_key` favorito" — este pipeline solo le agrega una segunda fuente de cambios a vigilar, no un sistema de notificación distinto.
+
+**Por qué no se construye antes de decidir E.1**: el paso 2 (detección) tiene forma distinta según la fuente — webhook asíncrono si es Boostr (opción 3), llamada directa si es Playwright propio (opción 2) — construir el pipeline completo antes de la prueba de $10.000 CLP sería trabajo que probablemente hay que rehacer. Orden correcto: **E.1 (decidir/validar fuente) → E.2 (este pipeline) → 2.F ya queda compatible sin cambios adicionales** porque se diseñó pensando en esta extensión (ver su punto 6, "Futuro, depende de E.1").
+
+## 2.F Notificaciones sobre favoritos (propuesta, 2026-08-12, NO construido)
+
+**Pedido**: correr todos los días, y si hay documento o movimiento nuevo en una causa que el usuario marcó como favorita (`favoritos`, ya existe — `src/app/mapa/favorites.ts`, tabla keyed por `numero_rol`), notificarlo. Preocupación explícita del usuario: **son muchas las concesiones** — la solución tiene que escalar.
+
+### La razón por la que esto escala bien: no hay que vigilar el universo completo
+
+El miedo natural es "¿vamos a chequear miles de concesiones todos los días?". No — **el trabajo caro (bajar boletín, parsear PDF con LLM) ya corre todos los días para el universo completo, sin importar si algo está favorito o no** (paso C, `boletin-parse.yml`, ya construido). Lo único que falta es una comparación barata, sobre datos que ya están materializados en `expedientes` (`etapa_actual`/`etapa_cambiada_at`/`updated_at`, paso B, ya construido) — eso es una query SQL, no una llamada a un sitio externo. El costo de esa comparación escala con **la cantidad de expedientes distintos que alguien tiene en favoritos** (acotado, probablemente cientos, no con el universo total de concesiones (miles) ni con la cantidad de usuarios × favoritos (se deduplica por `expediente_key`).
+
+La única pieza que sí es sensible a escala es una futura vigilancia de movimientos PJUD por causa (sección E.1, opción 3) porque cuesta $2.000 CLP por consulta a un tercero — por eso el diseño de abajo la deja explícitamente acotada solo a favoritos, y aparte del chequeo diario gratis de boletín.
+
+### Gap a cerrar primero: `favoritos` no sabe a qué `expediente_key` corresponde
+
+`favoritos` guarda `numero_rol` (rol SERNAGEOMIN de la concesión) + una copia de `nombre`/`titular_nombre`/`comuna` al momento de guardar — no guarda `expediente_key` (la clave de agrupación judicial del boletín, sección A). Hoy esa correlación se hace al vuelo cuando se abre el modal (`/api/boletin/concesion?nombre=&titular=`, `ilike(nombre)` + desambiguación por `titular`). Para notificaciones hace falta la relación resuelta y guardada, no recalculada cada vez.
+
+### Diseño propuesto (4 piezas)
+
+**1. Migración — `favoritos.expediente_key`** (nullable, `text`)
+Se completa al guardar el favorito (mismo matching que `/api/boletin/concesion`, reusar esa lógica) y con un backfill puntual para los favoritos ya existentes. Puede quedar `null` si el nombre/titular todavía no tiene ninguna publicación indexada — se reintenta en el próximo backfill nocturno, no bloquea el guardado del favorito.
+
+**2. Migración — tabla `notificaciones`**
+```
+id, user_id, expediente_key, tipo ('nueva_publicacion' | 'cambio_etapa'),
+titulo, mensaje, url (deep-link al modal de /mapa), created_at, leida_at (nullable)
+```
+Una fila por (usuario que lo favoriteó) × (evento) — si 3 usuarios favoritearon el mismo expediente, son 3 filas, cada uno con su propio estado de leído. RLS: cada usuario solo lee las suyas (mismo patrón que `favoritos`).
+
+**3. Job diario — generador de notificaciones**
+Nuevo paso al final de `boletin-parse.yml` (mismo cron, después de que el drenado deja `expedientes` al día) o workflow separado que llama a un endpoint nuevo `/api/notificaciones/generar` (protegido con el mismo secret que `sync`/`parse-batch`):
+- `SELECT DISTINCT expediente_key FROM favoritos WHERE expediente_key IS NOT NULL`
+- Por cada uno, compara `expedientes.etapa_cambiada_at` / `publicaciones_count` contra la última notificación ya generada para ese `expediente_key` (o un timestamp de "última corrida" guardado en el propio job).
+- Si cambió: inserta una `notificaciones` por cada `user_id` en `favoritos` que tenga ese `expediente_key`.
+- Costo: una corrida de SQL sobre, en el peor caso, unos pocos miles de filas — segundos, no minutos. Cero llamadas a sitios externos nuevas.
+
+**4. UI — campanita de notificaciones**
+Badge con contador de `leida_at is null` en el header de `/mapa` (o global en el layout si tiene sentido mostrarlo fuera de `/mapa` también). Dropdown con la lista, click marca `leida_at` y abre el modal de esa concesión (reusa el flujo de apertura de modal que ya existe para favoritos). Sin esto la tabla `notificaciones` no sirve de nada — es la mitad visible del feature.
+
+### Fase 1b (opcional, no bloqueante) — email además de in-app
+
+Con `profiles.email` ya disponible, un digest diario (no un correo por evento — evita spam si un usuario tiene muchos favoritos activos ese día) resumiendo las notificaciones nuevas. Requiere agregar un proveedor transaccional (ej. Resend — no hay ninguno en `package.json` hoy; el envío de invitación/reset actual usa el SMTP propio de Supabase Auth, pensado para correos de autenticación, no para volumen transaccional). Dejar para después de validar que el in-app-only ya resuelve el caso de uso — no construir email sin que el usuario lo pida.
+
+### Relación con la sección 3 (abajo)
+
+La sección 3 ("Novedades del boletín") es una vista **global/admin** de todo lo que cambió, para revisar concesión por concesión sin filtrar por usuario. Esta sección 2.F es el mismo dato (`etapa_cambiada_at` de `expedientes`) pero **filtrado por lo que cada usuario marcó como relevante** y empujado como notificación, no como lista para navegar. Se pueden construir en cualquier orden — 2.F no depende de que la sección 3 exista primero, ambas leen de la misma tabla `expedientes` ya materializada.
+
+### Orden de implementación sugerido
+1. `favoritos.expediente_key` (migración + backfill + wireo en `addFavorito`).
+2. Tabla `notificaciones` + RLS.
+3. Endpoint `/api/notificaciones/generar` + paso nuevo en el cron diario.
+4. Campanita en el header + dropdown + marcar leída.
+5. (Opcional) digest por email vía Resend, solo si el in-app no alcanza.
+6. (Futuro, depende de E.1) extender el generador para también diffear movimientos PJUD de los favoritos que tengan `causa_rol`+`juzgado`, acotado y con cadencia más espaciada que diaria dado el costo por consulta.
 
 ## 3. Vista de revisión ("Novedades del boletín")
 

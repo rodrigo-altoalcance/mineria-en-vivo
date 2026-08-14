@@ -54,6 +54,33 @@ function fieldRowLink(label: string, value: string | number | null | undefined, 
     <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">${label}</span>${display}</div>`
 }
 
+// A partir de "V-2920-2023" devuelve { rol: '2920', anio: '2023' } — o null si
+// el formato no matchea (el LLM no siempre extrae el mismo patrón exacto).
+function parseCausaRol(causaRol: string | null | undefined): { rol: string; anio: string } | null {
+  if (!causaRol) return null
+  const m = String(causaRol).match(/(\d+)\D+(\d{4})/)
+  return m ? { rol: m[1], anio: m[2] } : null
+}
+
+// "Opción 1" de docs/plan-etapas-tramite.md sección E: sin backend ni scraping
+// propio, solo un link a la búsqueda de PJUD con el Rol/Tribunal a mano para que
+// el usuario los tipee — NO precarga el formulario (Consulta Unificada es una
+// SPA con selects en cascada Competencia→Corte de Apelaciones→Tribunal; no se
+// confirmó que lea query params, y además no tenemos la Corte de Apelaciones
+// — el parseo LLM solo extrae `juzgado`, no la Corte a la que pertenece).
+function pjudRow(juzgado: string | null | undefined, causaRol: string | null | undefined) {
+  if (!causaRol) return ''
+  const parsed = parseCausaRol(causaRol)
+  const rolLabel = parsed ? `${parsed.rol}-${parsed.anio}` : causaRol
+  return `<div style="padding:6px 0;border-bottom:1px solid rgba(46,50,71,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">Causa judicial</span>
+      <a href="https://oficinajudicialvirtual.pjud.cl/indexN.php" target="_blank" rel="noopener" style="font-size:13px;color:#648aff;text-decoration:none;text-align:right;white-space:nowrap">Ver en PJUD ↗</a>
+    </div>
+    <div style="font-size:10px;color:#7a82a8;margin-top:2px;text-align:right">Buscar Rol ${rolLabel}${juzgado ? ` · ${juzgado}` : ''}</div>
+  </div>`
+}
+
 function pendingRow(label: string) {
   return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(217,119,6,.2);gap:12px">
     <span style="font-size:11px;font-weight:600;color:#7a82a8;flex-shrink:0">${label}</span>
@@ -580,6 +607,7 @@ export default function MapClient({
                 ${renderEtapaStepper(cronFuente, cats, latest)}
                 ${latest.juzgado ? fieldRowLink('Juzgado', latest.juzgado, latest.url_pdf) : ''}
                 ${latest.causa_rol ? fieldRowLink('Causa ROL', latest.causa_rol, latest.url_pdf) : ''}
+                ${pjudRow(latest.juzgado, latest.causa_rol)}
                 ${latest.conservador ? fieldRowLink('Conservador', latest.conservador, latest.url_pdf) : ''}
                 ${latest.inscripcion_fs ? fieldRowLink('FS / N°', latest.inscripcion_fs, latest.url_pdf) : ''}
                 ${latest.area_ha ? fieldRow('Área (há)', latest.area_ha) : ''}
